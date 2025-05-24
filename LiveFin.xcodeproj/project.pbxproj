@@ -38,6 +38,14 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		EBAF6C812DCB05B10054C539 /* Exceptions for "Beta" folder in "LiveFinTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"Launch Screen.storyboard",
+				SplashScreenView.swift,
+			);
+			target = EBCC8A182DA8889B003DF1A6 /* LiveFinTests */;
+		};
 		EBCC8A812DA88C5E003DF1A6 /* Exceptions for "LiveFin" folder in "LiveFin" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -48,22 +56,20 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		EBAF6C7C2DCB058A0054C539 /* Beta */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				EBAF6C812DCB05B10054C539 /* Exceptions for "Beta" folder in "LiveFinTests" target */,
+			);
+			path = Beta;
+			sourceTree = "<group>";
+		};
 		EBCC8A0E2DA88899003DF1A6 /* LiveFin */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				EBCC8A812DA88C5E003DF1A6 /* Exceptions for "LiveFin" folder in "LiveFin" target */,
 			);
 			path = LiveFin;
-			sourceTree = "<group>";
-		};
-		EBCC8A1C2DA8889B003DF1A6 /* LiveFinTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = LiveFinTests;
-			sourceTree = "<group>";
-		};
-		EBCC8A262DA8889B003DF1A6 /* LiveFinUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = LiveFinUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -102,8 +108,7 @@
 			isa = PBXGroup;
 			children = (
 				EBCC8A0E2DA88899003DF1A6 /* LiveFin */,
-				EBCC8A1C2DA8889B003DF1A6 /* LiveFinTests */,
-				EBCC8A262DA8889B003DF1A6 /* LiveFinUITests */,
+				EBAF6C7C2DCB058A0054C539 /* Beta */,
 				EBCC8A0D2DA88899003DF1A6 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -134,6 +139,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
+				EBAF6C7C2DCB058A0054C539 /* Beta */,
 				EBCC8A0E2DA88899003DF1A6 /* LiveFin */,
 			);
 			name = LiveFin;
@@ -161,9 +167,6 @@
 			dependencies = (
 				EBCC8A1B2DA8889B003DF1A6 /* PBXTargetDependency */,
 			);
-			fileSystemSynchronizedGroups = (
-				EBCC8A1C2DA8889B003DF1A6 /* LiveFinTests */,
-			);
 			name = LiveFinTests;
 			packageProductDependencies = (
 			);
@@ -183,9 +186,6 @@
 			);
 			dependencies = (
 				EBCC8A252DA8889B003DF1A6 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				EBCC8A262DA8889B003DF1A6 /* LiveFinUITests */,
 			);
 			name = LiveFinUITests;
 			packageProductDependencies = (
@@ -209,6 +209,7 @@
 					};
 					EBCC8A182DA8889B003DF1A6 = {
 						CreatedOnToolsVersion = 16.3;
+						LastSwiftMigration = 1630;
 						TestTargetID = EBCC8A0B2DA88899003DF1A6;
 					};
 					EBCC8A222DA8889B003DF1A6 = {
@@ -493,6 +494,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -501,6 +503,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = kpgamingz.LiveFinTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_OBJC_BRIDGING_HEADER = "LiveFinTests/LiveFinTests-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LiveFin.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/LiveFin";
@@ -511,6 +515,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -519,6 +524,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = kpgamingz.LiveFinTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_OBJC_BRIDGING_HEADER = "LiveFinTests/LiveFinTests-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LiveFin.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/LiveFin";

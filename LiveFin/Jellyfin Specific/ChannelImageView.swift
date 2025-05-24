@@ -16,26 +16,28 @@ struct ChannelImageView: View {
     @State private var imageUrl: URL?
 
     func fetchImageUrl() {
-        // Construct the image URL manually similar to GetItemImageAPI.swift
         let imageType = "Primary"
         let baseUrl = baseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let apiKey = apiKey
         let path = "/Items/\(channelId)/Images/\(imageType)"
-        var urlString = "\(baseUrl)\(path)?maxWidth=200&api_key=\(apiKey)"
-        
-        if var components = URLComponents(string: urlString) {
-            let timestampQuery = URLQueryItem(name: "t", value: "\(Date().timeIntervalSince1970)")
-            if components.queryItems != nil {
-                components.queryItems?.append(timestampQuery)
-            } else {
-                components.queryItems = [timestampQuery]
-            }
-            if let finalUrl = components.url {
-                DispatchQueue.main.async {
-                    self.imageUrl = finalUrl
-                }
+        let urlString = "\(baseUrl)\(path)?maxWidth=200&api_key=\(apiKey)"
+
+        guard var components = URLComponents(string: urlString) else { return }
+        // Always add a timestamp to force reload
+        let timestampQuery = URLQueryItem(name: "t", value: "\(Date().timeIntervalSince1970)")
+        components.queryItems = (components.queryItems ?? []) + [timestampQuery]
+
+        guard let finalUrl = components.url else { return }
+
+        let request = URLRequest(url: finalUrl)
+
+        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
+            guard let data = data, let response = response else { return }
+
+            DispatchQueue.main.async {
+                self.imageUrl = finalUrl
             }
         }
+        task.resume()
     }
 
     var body: some View {
@@ -47,7 +49,6 @@ struct ChannelImageView: View {
                 image
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
             case .failure:
                 Image(systemName: "photo")
                     .resizable()

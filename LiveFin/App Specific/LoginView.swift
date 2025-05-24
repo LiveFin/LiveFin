@@ -74,7 +74,7 @@ struct LoginView: View {
                                 var request = URLRequest(url: url, timeoutInterval: 60)
                                 request.httpMethod = "POST"
                                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                                request.setValue("MediaBrowser Client=\"LiveFin\", Device=\"iPhone\", DeviceId=\"unique-device-id\", Version=\"1.0\"" , forHTTPHeaderField: "X-Emby-Authorization")
+                                request.setValue("MediaBrowser Client=\"LiveFin\", Device=\"\(appState.clientDevice)\", DeviceId=\"unique-device-id\", Version=\"\(appState.clientVersion)\"" , forHTTPHeaderField: "X-Emby-Authorization")
 
                                 let body: [String: Any] = [
                                     "Username": username,
@@ -137,9 +137,9 @@ struct LoginView: View {
                                     let config = JellyfinClient.Configuration(
                                         url: URL(string: server)!,
                                         client: "LiveFin",
-                                        deviceName: "iPhone",
+                                        deviceName: appState.clientDevice,
                                         deviceID: UUID().uuidString,
-                                        version: "1.0.0"
+                                        version: appState.clientVersion
                                     )
                                     let client = JellyfinClient(configuration: config)
                                     appState.client = client

@@ -11,8 +11,16 @@ final class AppState: ObservableObject {
     @Published var accessToken: String = ""
     @Published var userID: String = ""
     @Published var username: String = "" // Added property for username
-    @Published var deviceId: String = UUID().uuidString  // Unique device ID for each session
+    @Published var deviceId: String = KeychainHelper.load(key: "deviceUUID") ?? {
+        let newUUID = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+        KeychainHelper.save(key: "deviceUUID", value: newUUID)
+        return newUUID
+    }()
     @Published var apiKey: String = "" // Add this to AppState
+    
+    @Published var clientVersion: String = "1.0.0"
+    @Published var clientDevice: String = UIDevice.current.name
+    @Published var selectedURL: URL?
 
     @MainActor
     func login(server: URL, username: String, password: String) async {
@@ -20,9 +28,9 @@ final class AppState: ObservableObject {
             let config = JellyfinClient.Configuration(
                 url: server,
                 client: "LiveFin",
-                deviceName: "iPhone",
-                deviceID: UUID().uuidString,
-                version: "1.0.0"
+                deviceName: clientDevice, // Consistent device name
+                deviceID: deviceId, // Persistent device ID
+                version: clientVersion
             )
             let client = JellyfinClient(configuration: config)
 
@@ -92,9 +100,9 @@ final class AppState: ObservableObject {
         let config = JellyfinClient.Configuration(
             url: URL(string: server)!,
             client: "LiveFin",
-            deviceName: "iPhone",
+            deviceName: clientDevice,
             deviceID: UUID().uuidString,
-            version: "1.0.0"
+            version: clientVersion
         )
         self.client = JellyfinClient(configuration: config)
         self.serverURL = server

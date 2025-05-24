@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "livefin-logo-3.png",
+      "filename" : "livefin-logo-light.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -13,7 +13,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "livefin-logo-2.png",
+      "filename" : "livefin-logo-dark.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -25,7 +25,7 @@
           "value" : "tinted"
         }
       ],
-      "filename" : "livefin-logo.png",
+      "filename" : "livefin-logo-tint.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
