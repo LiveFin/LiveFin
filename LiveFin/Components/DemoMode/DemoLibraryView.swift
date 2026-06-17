@@ -178,7 +178,7 @@ struct DemoLibraryView: View {
                             .font(.headline)
                         Spacer()
                     }
-                    Text("App Store Sandbox content provided as a courtesy via the public Jellyfin Demo project (demo.jellyfin.org). No registration or local server setup is required.")
+                    Text("Library provided in courtesy of the Jellyfin Project. (demo.jellyfin.org). No registration or local server setup is required. All content are under the public domain")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -770,4 +770,3 @@ struct DemoMediaItemDetailView: View {
     }
 }
 
-```
