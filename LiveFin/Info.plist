@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.livefin.app.epgrefresh</string>
+	</array>
+	<key>CFBundleAlternateIcons</key>
+	<dict>
+		<key>Aura</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>LiveFin Logo Aura</string>
+			</array>
+			<key>UIPrerenderedIcon</key>
+			<false/>
+		</dict>
+		<key>Burple</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>LiveFin Logo Burple</string>
+			</array>
+			<key>UIPrerenderedIcon</key>
+			<false/>
+		</dict>
+		<key>Gree</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>LiveFin Logo Gree</string>
+			</array>
+			<key>UIPrerenderedIcon</key>
+			<false/>
+		</dict>
+		<key>Jelly</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>LiveFin Logo Jelly</string>
+			</array>
+			<key>UIPrerenderedIcon</key>
+			<false/>
+		</dict>
+		<key>Purple</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>LiveFin Logo Purple</string>
+			</array>
+			<key>UIPrerenderedIcon</key>
+			<false/>
+		</dict>
+		<key>Real</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>LiveFin Logo Real</string>
+			</array>
+			<key>UIPrerenderedIcon</key>
+			<false/>
+		</dict>
+		<key>Roho</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>LiveFin Logo Roho</string>
+			</array>
+			<key>UIPrerenderedIcon</key>
+			<false/>
+		</dict>
+		<key>Yolo</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>LiveFin Logo Yolo</string>
+			</array>
+			<key>UIPrerenderedIcon</key>
+			<false/>
+		</dict>
+	</dict>
+	<key>NSAllowsLocalNetworking</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>localhost</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<true/>
+		<key>UIApplicationSupportsTabbedSceneCollection</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict/>
+	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+		<string>audio</string>
+	</array>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict/>
+	</array>
+	<key>com.apple.developer.device-information.user-assigned-device-name</key>
+	<true/>
+</dict>
+</plist>

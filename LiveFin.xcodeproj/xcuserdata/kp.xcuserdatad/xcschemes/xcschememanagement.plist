@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>SchemeUserState</key>
+	<dict>
+		<key>LIveFin Watch App.xcscheme_^#shared#^_</key>
+		<dict>
+			<key>orderHint</key>
+			<integer>1</integer>
+		</dict>
+		<key>LiveFin tvOS.xcscheme_^#shared#^_</key>
+		<dict>
+			<key>orderHint</key>
+			<integer>2</integer>
+		</dict>
+		<key>LiveFin.xcscheme_^#shared#^_</key>
+		<dict>
+			<key>orderHint</key>
+			<integer>0</integer>
+		</dict>
+		<key>LiveFinTests.xcscheme_^#shared#^_</key>
+		<dict>
+			<key>orderHint</key>
+			<integer>3</integer>
+		</dict>
+		<key>LiveFinUITests.xcscheme_^#shared#^_</key>
+		<dict>
+			<key>orderHint</key>
+			<integer>4</integer>
+		</dict>
+	</dict>
+	<key>SuppressBuildableAutocreation</key>
+	<dict>
+		<key>EB0E9CDB2EC1606A0036D0AB</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>EB130A672EDB35B600381D60</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>EBCC8A0B2DA88899003DF1A6</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>EBCC8A182DA8889B003DF1A6</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>EBE19BBF2F058A7A00C21C63</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>EBFEA8E02F02D5AB00E46D26</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+	</dict>
+</dict>
+</plist>

@@ -1,0 +1,992 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		EBCC8A802DA88B95003DF1A6 /* JellyfinAPI in Frameworks */ = {isa = PBXBuildFile; productRef = EBCC8A7F2DA88B95003DF1A6 /* JellyfinAPI */; };
+		EBCC8A862DA96727003DF1A6 /* NukeUI in Frameworks */ = {isa = PBXBuildFile; productRef = EBCC8A852DA96727003DF1A6 /* NukeUI */; };
+		EBCC8A882DA967E2003DF1A6 /* Nuke in Frameworks */ = {isa = PBXBuildFile; productRef = EBCC8A872DA967E2003DF1A6 /* Nuke */; };
+		EBCC8A8A2DA967E2003DF1A6 /* NukeExtensions in Frameworks */ = {isa = PBXBuildFile; productRef = EBCC8A892DA967E2003DF1A6 /* NukeExtensions */; };
+		EBCC8A8C2DA967E2003DF1A6 /* NukeVideo in Frameworks */ = {isa = PBXBuildFile; productRef = EBCC8A8B2DA967E2003DF1A6 /* NukeVideo */; };
+		EBE19BCA2F058A8300C21C63 /* LiveFin Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = EBE19BC02F058A7A00C21C63 /* LiveFin Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		EBCC8A1A2DA8889B003DF1A6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = EBCC8A042DA88899003DF1A6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EBCC8A0B2DA88899003DF1A6;
+			remoteInfo = LiveFin;
+		};
+		EBCC8A242DA8889B003DF1A6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = EBCC8A042DA88899003DF1A6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EBCC8A0B2DA88899003DF1A6;
+			remoteInfo = LiveFin;
+		};
+		EBE19BC82F058A8300C21C63 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = EBCC8A042DA88899003DF1A6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EBE19BBF2F058A7A00C21C63;
+			remoteInfo = "LIveFin Watch App";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		EB0E9CBA2EC15E350036D0AB /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 12;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				EBE19BCA2F058A8300C21C63 /* LiveFin Watch App.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		EB15E79D2EED2DCF00A778BD /* LiveFin tvOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "LiveFin tvOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		EBCC8A0C2DA88899003DF1A6 /* LiveFin.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LiveFin.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		EBCC8A192DA8889B003DF1A6 /* LiveFinTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LiveFinTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		EBCC8A232DA8889B003DF1A6 /* LiveFinUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LiveFinUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		EBE19BC02F058A7A00C21C63 /* LiveFin Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "LiveFin Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		EB15E7AC2EED2DD100A778BD /* Exceptions for "LiveFin tvOS" folder in "LiveFin tvOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
+		};
+		EB76D37E2F0CA9890068D1F9 /* Exceptions for "LIveFin Watch App" folder in "LiveFin Watch App" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				.xcassets/AccentColor.colorset/Contents.json,
+				.xcassets/AppIcon.appiconset/Contents.json,
+				.xcassets/Contents.json,
+			);
+			target = EBE19BBF2F058A7A00C21C63 /* LiveFin Watch App */;
+		};
+		EBCC8A812DA88C5E003DF1A6 /* Exceptions for "LiveFin" folder in "LiveFin" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = EBCC8A0B2DA88899003DF1A6 /* LiveFin */;
+		};
+		EBE19BDC2F058EE100C21C63 /* Exceptions for "Shared" folder in "LiveFin Watch App" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"Resources/LiveFin-Aura.icon",
+				"Resources/LiveFin-Broken.icon",
+				"Resources/LiveFin-Burple.icon",
+				"Resources/LiveFin-Jelly.icon",
+				"Resources/LiveFin-Noir.icon",
+				"Resources/LiveFin-Real.icon",
+				"Resources/LiveFin-Rojo.icon",
+				"Resources/LiveFin-Slime.icon",
+				"Resources/LiveFin-Yolo.icon",
+				Resources/LiveFin.icon,
+			);
+			target = EBE19BBF2F058A7A00C21C63 /* LiveFin Watch App */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		EB130A632EDB353D00381D60 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				EBE19BDC2F058EE100C21C63 /* Exceptions for "Shared" folder in "LiveFin Watch App" target */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		EB15E79E2EED2DCF00A778BD /* LiveFin tvOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				EB15E7AC2EED2DD100A778BD /* Exceptions for "LiveFin tvOS" folder in "LiveFin tvOS" target */,
+			);
+			path = "LiveFin tvOS";
+			sourceTree = "<group>";
+		};
+		EBCC8A0E2DA88899003DF1A6 /* LiveFin */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				EBCC8A812DA88C5E003DF1A6 /* Exceptions for "LiveFin" folder in "LiveFin" target */,
+			);
+			path = LiveFin;
+			sourceTree = "<group>";
+		};
+		EBE19BC12F058A7A00C21C63 /* LIveFin Watch App */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				EB76D37E2F0CA9890068D1F9 /* Exceptions for "LIveFin Watch App" folder in "LiveFin Watch App" target */,
+			);
+			path = "LIveFin Watch App";
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		EB15E79A2EED2DCF00A778BD /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EBCC8A092DA88899003DF1A6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EBCC8A882DA967E2003DF1A6 /* Nuke in Frameworks */,
+				EBCC8A8A2DA967E2003DF1A6 /* NukeExtensions in Frameworks */,
+				EBCC8A8C2DA967E2003DF1A6 /* NukeVideo in Frameworks */,
+				EBCC8A802DA88B95003DF1A6 /* JellyfinAPI in Frameworks */,
+				EBCC8A862DA96727003DF1A6 /* NukeUI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EBCC8A162DA8889B003DF1A6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EBCC8A202DA8889B003DF1A6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EBE19BBD2F058A7A00C21C63 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		EBCC8A032DA88899003DF1A6 = {
+			isa = PBXGroup;
+			children = (
+				EBCC8A0E2DA88899003DF1A6 /* LiveFin */,
+				EBE19BC12F058A7A00C21C63 /* LIveFin Watch App */,
+				EB15E79E2EED2DCF00A778BD /* LiveFin tvOS */,
+				EB130A632EDB353D00381D60 /* Shared */,
+				EBCC8A0D2DA88899003DF1A6 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		EBCC8A0D2DA88899003DF1A6 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				EBCC8A0C2DA88899003DF1A6 /* LiveFin.app */,
+				EBCC8A192DA8889B003DF1A6 /* LiveFinTests.xctest */,
+				EBCC8A232DA8889B003DF1A6 /* LiveFinUITests.xctest */,
+				EB15E79D2EED2DCF00A778BD /* LiveFin tvOS.app */,
+				EBE19BC02F058A7A00C21C63 /* LiveFin Watch App.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EB15E7AD2EED2DD100A778BD /* Build configuration list for PBXNativeTarget "LiveFin tvOS" */;
+			buildPhases = (
+				EB15E7992EED2DCF00A778BD /* Sources */,
+				EB15E79A2EED2DCF00A778BD /* Frameworks */,
+				EB15E79B2EED2DCF00A778BD /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				EB15E79E2EED2DCF00A778BD /* LiveFin tvOS */,
+			);
+			name = "LiveFin tvOS";
+			packageProductDependencies = (
+			);
+			productName = "LiveFin tvOS";
+			productReference = EB15E79D2EED2DCF00A778BD /* LiveFin tvOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		EBCC8A0B2DA88899003DF1A6 /* LiveFin */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EBCC8A2D2DA8889B003DF1A6 /* Build configuration list for PBXNativeTarget "LiveFin" */;
+			buildPhases = (
+				EBCC8A082DA88899003DF1A6 /* Sources */,
+				EBCC8A092DA88899003DF1A6 /* Frameworks */,
+				EBCC8A0A2DA88899003DF1A6 /* Resources */,
+				EB0E9CBA2EC15E350036D0AB /* Embed Watch Content */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				EBE19BC92F058A8300C21C63 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				EB130A632EDB353D00381D60 /* Shared */,
+				EBCC8A0E2DA88899003DF1A6 /* LiveFin */,
+			);
+			name = LiveFin;
+			packageProductDependencies = (
+				EBCC8A7F2DA88B95003DF1A6 /* JellyfinAPI */,
+				EBCC8A852DA96727003DF1A6 /* NukeUI */,
+				EBCC8A872DA967E2003DF1A6 /* Nuke */,
+				EBCC8A892DA967E2003DF1A6 /* NukeExtensions */,
+				EBCC8A8B2DA967E2003DF1A6 /* NukeVideo */,
+			);
+			productName = LiveFin;
+			productReference = EBCC8A0C2DA88899003DF1A6 /* LiveFin.app */;
+			productType = "com.apple.product-type.application";
+		};
+		EBCC8A182DA8889B003DF1A6 /* LiveFinTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EBCC8A302DA8889B003DF1A6 /* Build configuration list for PBXNativeTarget "LiveFinTests" */;
+			buildPhases = (
+				EBCC8A152DA8889B003DF1A6 /* Sources */,
+				EBCC8A162DA8889B003DF1A6 /* Frameworks */,
+				EBCC8A172DA8889B003DF1A6 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				EBCC8A1B2DA8889B003DF1A6 /* PBXTargetDependency */,
+			);
+			name = LiveFinTests;
+			packageProductDependencies = (
+			);
+			productName = LiveFinTests;
+			productReference = EBCC8A192DA8889B003DF1A6 /* LiveFinTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		EBCC8A222DA8889B003DF1A6 /* LiveFinUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EBCC8A332DA8889B003DF1A6 /* Build configuration list for PBXNativeTarget "LiveFinUITests" */;
+			buildPhases = (
+				EBCC8A1F2DA8889B003DF1A6 /* Sources */,
+				EBCC8A202DA8889B003DF1A6 /* Frameworks */,
+				EBCC8A212DA8889B003DF1A6 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				EBCC8A252DA8889B003DF1A6 /* PBXTargetDependency */,
+			);
+			name = LiveFinUITests;
+			packageProductDependencies = (
+			);
+			productName = LiveFinUITests;
+			productReference = EBCC8A232DA8889B003DF1A6 /* LiveFinUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		EBE19BBF2F058A7A00C21C63 /* LiveFin Watch App */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EBE19BCD2F058A8300C21C63 /* Build configuration list for PBXNativeTarget "LiveFin Watch App" */;
+			buildPhases = (
+				EBE19BBC2F058A7A00C21C63 /* Sources */,
+				EBE19BBD2F058A7A00C21C63 /* Frameworks */,
+				EBE19BBE2F058A7A00C21C63 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				EBE19BC12F058A7A00C21C63 /* LIveFin Watch App */,
+			);
+			name = "LiveFin Watch App";
+			packageProductDependencies = (
+			);
+			productName = "LIveFin Watch App";
+			productReference = EBE19BC02F058A7A00C21C63 /* LiveFin Watch App.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		EBCC8A042DA88899003DF1A6 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2620;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					EB15E79C2EED2DCF00A778BD = {
+						CreatedOnToolsVersion = 26.1.1;
+					};
+					EBCC8A0B2DA88899003DF1A6 = {
+						CreatedOnToolsVersion = 16.3;
+					};
+					EBCC8A182DA8889B003DF1A6 = {
+						CreatedOnToolsVersion = 16.3;
+						LastSwiftMigration = 1630;
+						TestTargetID = EBCC8A0B2DA88899003DF1A6;
+					};
+					EBCC8A222DA8889B003DF1A6 = {
+						CreatedOnToolsVersion = 16.3;
+						TestTargetID = EBCC8A0B2DA88899003DF1A6;
+					};
+					EBE19BBF2F058A7A00C21C63 = {
+						CreatedOnToolsVersion = 26.2;
+						LastSwiftMigration = 2620;
+					};
+				};
+			};
+			buildConfigurationList = EBCC8A072DA88899003DF1A6 /* Build configuration list for PBXProject "LiveFin" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = EBCC8A032DA88899003DF1A6;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				EBCC8A7E2DA88B95003DF1A6 /* XCRemoteSwiftPackageReference "jellyfin-sdk-swift" */,
+				EBCC8A842DA96727003DF1A6 /* XCRemoteSwiftPackageReference "nuke" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = EBCC8A0D2DA88899003DF1A6 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				EBCC8A0B2DA88899003DF1A6 /* LiveFin */,
+				EBE19BBF2F058A7A00C21C63 /* LiveFin Watch App */,
+				EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */,
+				EBCC8A182DA8889B003DF1A6 /* LiveFinTests */,
+				EBCC8A222DA8889B003DF1A6 /* LiveFinUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		EB15E79B2EED2DCF00A778BD /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EBCC8A0A2DA88899003DF1A6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EBCC8A172DA8889B003DF1A6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EBCC8A212DA8889B003DF1A6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EBE19BBE2F058A7A00C21C63 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		EB15E7992EED2DCF00A778BD /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EBCC8A082DA88899003DF1A6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EBCC8A152DA8889B003DF1A6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EBCC8A1F2DA8889B003DF1A6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EBE19BBC2F058A7A00C21C63 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		EBCC8A1B2DA8889B003DF1A6 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EBCC8A0B2DA88899003DF1A6 /* LiveFin */;
+			targetProxy = EBCC8A1A2DA8889B003DF1A6 /* PBXContainerItemProxy */;
+		};
+		EBCC8A252DA8889B003DF1A6 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EBCC8A0B2DA88899003DF1A6 /* LiveFin */;
+			targetProxy = EBCC8A242DA8889B003DF1A6 /* PBXContainerItemProxy */;
+		};
+		EBE19BC92F058A8300C21C63 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EBE19BBF2F058A7A00C21C63 /* LiveFin Watch App */;
+			targetProxy = EBE19BC82F058A8300C21C63 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		EB15E7AE2EED2DD100A778BD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KFQZK38LL3;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "LiveFin tvOS/Info.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Automatic;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.kpgamingz.LiveFin-tvOS";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+				TVOS_DEPLOYMENT_TARGET = 26.1;
+			};
+			name = Debug;
+		};
+		EB15E7AF2EED2DD100A778BD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KFQZK38LL3;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "LiveFin tvOS/Info.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Automatic;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.kpgamingz.LiveFin-tvOS";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+				TVOS_DEPLOYMENT_TARGET = 26.1;
+			};
+			name = Release;
+		};
+		EBCC8A2B2DA8889B003DF1A6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				INFOPLIST_FILE = /Users/kp/Desktop/LiveFin/LiveFin/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		EBCC8A2C2DA8889B003DF1A6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				INFOPLIST_FILE = /Users/kp/Desktop/LiveFin/LiveFin/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		EBCC8A2E2DA8889B003DF1A6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = LiveFin;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = LiveFin/LiveFin.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 38;
+				DEVELOPMENT_TEAM = KFQZK38LL3;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LiveFin/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app requires access to the local network to connect to your Jellyfin server.";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.kpgamingz.LiveFin;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 2.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kpgamingz.LiveFin;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		EBCC8A2F2DA8889B003DF1A6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = LiveFin;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = LiveFin/LiveFin.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 38;
+				DEVELOPMENT_TEAM = KFQZK38LL3;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LiveFin/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app requires access to the local network to connect to your Jellyfin server.";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.kpgamingz.LiveFin;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 2.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kpgamingz.LiveFin;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		EBCC8A312DA8889B003DF1A6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = kpgamingz.LiveFinTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_OBJC_BRIDGING_HEADER = "LiveFinTests/LiveFinTests-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LiveFin.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/LiveFin";
+			};
+			name = Debug;
+		};
+		EBCC8A322DA8889B003DF1A6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = kpgamingz.LiveFinTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_OBJC_BRIDGING_HEADER = "LiveFinTests/LiveFinTests-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LiveFin.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/LiveFin";
+			};
+			name = Release;
+		};
+		EBCC8A342DA8889B003DF1A6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = kpgamingz.LiveFinUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = LiveFin;
+			};
+			name = Debug;
+		};
+		EBCC8A352DA8889B003DF1A6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = kpgamingz.LiveFinUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = LiveFin;
+			};
+			name = Release;
+		};
+		EBE19BCB2F058A8300C21C63 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = LiveFin;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KFQZK38LL3;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = LIveFin;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.kpgamingz.LiveFin;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kpgamingz.LiveFin.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "LIveFin Watch App/LIveFin Watch App-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		EBE19BCC2F058A8300C21C63 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = LiveFin;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KFQZK38LL3;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = LIveFin;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.kpgamingz.LiveFin;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kpgamingz.LiveFin.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "LIveFin Watch App/LIveFin Watch App-Bridging-Header.h";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		EB15E7AD2EED2DD100A778BD /* Build configuration list for PBXNativeTarget "LiveFin tvOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EB15E7AE2EED2DD100A778BD /* Debug */,
+				EB15E7AF2EED2DD100A778BD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		EBCC8A072DA88899003DF1A6 /* Build configuration list for PBXProject "LiveFin" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EBCC8A2B2DA8889B003DF1A6 /* Debug */,
+				EBCC8A2C2DA8889B003DF1A6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		EBCC8A2D2DA8889B003DF1A6 /* Build configuration list for PBXNativeTarget "LiveFin" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EBCC8A2E2DA8889B003DF1A6 /* Debug */,
+				EBCC8A2F2DA8889B003DF1A6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		EBCC8A302DA8889B003DF1A6 /* Build configuration list for PBXNativeTarget "LiveFinTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EBCC8A312DA8889B003DF1A6 /* Debug */,
+				EBCC8A322DA8889B003DF1A6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		EBCC8A332DA8889B003DF1A6 /* Build configuration list for PBXNativeTarget "LiveFinUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EBCC8A342DA8889B003DF1A6 /* Debug */,
+				EBCC8A352DA8889B003DF1A6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		EBE19BCD2F058A8300C21C63 /* Build configuration list for PBXNativeTarget "LiveFin Watch App" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EBE19BCB2F058A8300C21C63 /* Debug */,
+				EBE19BCC2F058A8300C21C63 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		EBCC8A7E2DA88B95003DF1A6 /* XCRemoteSwiftPackageReference "jellyfin-sdk-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/jellyfin/jellyfin-sdk-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.5.1;
+			};
+		};
+		EBCC8A842DA96727003DF1A6 /* XCRemoteSwiftPackageReference "nuke" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/kean/nuke.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.8.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		EBCC8A7F2DA88B95003DF1A6 /* JellyfinAPI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = EBCC8A7E2DA88B95003DF1A6 /* XCRemoteSwiftPackageReference "jellyfin-sdk-swift" */;
+			productName = JellyfinAPI;
+		};
+		EBCC8A852DA96727003DF1A6 /* NukeUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = EBCC8A842DA96727003DF1A6 /* XCRemoteSwiftPackageReference "nuke" */;
+			productName = NukeUI;
+		};
+		EBCC8A872DA967E2003DF1A6 /* Nuke */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = EBCC8A842DA96727003DF1A6 /* XCRemoteSwiftPackageReference "nuke" */;
+			productName = Nuke;
+		};
+		EBCC8A892DA967E2003DF1A6 /* NukeExtensions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = EBCC8A842DA96727003DF1A6 /* XCRemoteSwiftPackageReference "nuke" */;
+			productName = NukeExtensions;
+		};
+		EBCC8A8B2DA967E2003DF1A6 /* NukeVideo */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = EBCC8A842DA96727003DF1A6 /* XCRemoteSwiftPackageReference "nuke" */;
+			productName = NukeVideo;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = EBCC8A042DA88899003DF1A6 /* Project object */;
+}
