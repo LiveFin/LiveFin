@@ -4,7 +4,10 @@
 
 # LiveFin
 
-LiveFin is a Live TV client for streaming your TV channels from Jellyfin on your iOS, iPadOS, and macOS devices.
+LiveFin is a Live TV focused client for streaming your TV channels from your personal Jellyfin server onto your iOS, iPadOS, and macOS devices.
+
+**NOTE:LiveFin is not part of the Jellyfin Project and doesn’t host any servers on its platforms**
+
 
 ## Features
 
@@ -20,7 +23,7 @@ LiveFin is a Live TV client for streaming your TV channels from Jellyfin on your
 
  ##   Installation
  
- Download from the App Store [![iTunes App Store](https://img.shields.io/badge/App%20Store-v2.2-blue?logo=appstore
+Download from the App Store [![iTunes App Store](https://img.shields.io/badge/App%20Store-v2.2-blue?logo=appstore
 )](https://apps.apple.com/us/app/livefin/id6748318433)
 
     
