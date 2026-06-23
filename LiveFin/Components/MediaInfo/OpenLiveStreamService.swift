@@ -73,15 +73,17 @@ struct JFOpenLiveStreamService {
                 request.setValue(clientVersion, forHTTPHeaderField: "X-Emby-Client-Version")
                 let userAgent = "LiveFin/\(clientVersion) (iOS; \(deviceName))"
                 request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+                
+                // FIX 3: Removed strict AVC/H264 constraints from postOpen.
                 let body: [String: Any] = [
                     "ChannelId": channelId,
                     "UserId": userId,
                     "AllowAudioStreamCopy": true,
                     "AllowVideoStreamCopy": true,
-                    "MaxStreamingBitrate": 60_000_000, // Increased to 60Mbps to prevent unnecessary transcodes
-                    "RequireAvc": true,
-                    "AudioCodec": "aac",
-                    "VideoCodec": "h264"
+                    "MaxStreamingBitrate": 60_000_000,
+                    "RequireAvc": false,
+                    "AudioCodec": "aac,ac3,eac3",
+                    "VideoCodec": "hevc,h265,h264"
                 ]
                 request.httpBody = try? JSONSerialization.data(withJSONObject: body)
                 URLSession.shared.dataTask(with: request) { data, response, _ in
@@ -102,9 +104,6 @@ struct JFOpenLiveStreamService {
         }
     }
 
-    // MARK: - FIX: Pre-open the live stream so the tuner starts buffering immediately
-    /// Call /LiveStreams/Open before PlaybackInfo so the server begins capturing the
-    /// tuner feed while we wait for PlaybackInfo. Returns the LiveStreamId or nil on failure.
     private static func openLiveStream(
         base: String,
         channelId: String,
@@ -129,7 +128,7 @@ struct JFOpenLiveStreamService {
             "ItemId": channelId,
             "UserId": userId,
             "PlaySessionId": UUID().uuidString,
-            "MaxStreamingBitrate": 60_000_000 // Increased to 60Mbps
+            "MaxStreamingBitrate": 60_000_000
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
@@ -238,75 +237,9 @@ struct JFOpenLiveStreamService {
         return sanitizeUrlString(comps.url?.absoluteString ?? urlString)
     }
 
-    private static func preparePlayableUrl(base: String, pathOrUrl: String, token: String, debug: Bool) async -> String {
-        let abs = buildAbsoluteURL(base: base, pathOrUrl: pathOrUrl) ?? pathOrUrl
-        let withKey = ensureApiKeyParam(in: abs, token: token)
-        let sanitized = sanitizeUrlString(withKey)
-
-        guard debug else { return sanitized }
-
-        if sanitized.lowercased().contains(".m3u8") {
-            if let url = URL(string: sanitized) {
-                var req = URLRequest(url: url)
-                req.httpMethod = "GET"
-                if !token.isEmpty { req.setValue(token, forHTTPHeaderField: "X-Emby-Token") }
-                do {
-                    let (data, resp) = try await URLSession.shared.data(for: req)
-                    if let http = resp as? HTTPURLResponse {
-                        if debug { print("[Probe] fetched manifest \(sanitized) status=\(http.statusCode) len=\(data.count)") }
-                    }
-                    let body = String(data: data, encoding: .utf8) ?? "<binary>"
-                    let firstSegLine = body.split(separator: "\n").first { line in
-                        let t = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                        return !t.hasPrefix("#") && !t.isEmpty
-                    }
-                    if let segLine = firstSegLine {
-                        var segUrlStr = String(segLine)
-                        if !segUrlStr.hasPrefix("http") {
-                            if let baseURL = URL(string: sanitized) {
-                                if segUrlStr.hasPrefix("/") {
-                                    segUrlStr = baseURL.scheme! + "://" + (baseURL.host ?? "") + segUrlStr
-                                } else {
-                                    let baseParent = baseURL.deletingLastPathComponent().absoluteString
-                                    segUrlStr = baseParent.hasSuffix("/") ? baseParent + segUrlStr : baseParent + "/" + segUrlStr
-                                }
-                            }
-                        }
-                        if debug { print("[Probe] probing segment URL: \(segUrlStr)") }
-                        if let segUrl = URL(string: segUrlStr) {
-                            var headReq = URLRequest(url: segUrl)
-                            headReq.httpMethod = "HEAD"
-                            if !token.isEmpty { headReq.setValue(token, forHTTPHeaderField: "X-Emby-Token") }
-                            do {
-                                let (_, headResp) = try await URLSession.shared.data(for: headReq)
-                                if let http = headResp as? HTTPURLResponse {
-                                    if debug { print("[Probe] segment HEAD status=\(http.statusCode) content-type=\(http.allHeaderFields["Content-Type"] ?? "<nil>")") }
-                                }
-                            } catch {
-                                if debug { print("[Probe] HEAD probe failed for \(segUrlStr): \(error)") }
-                            }
-                        }
-                    } else {
-                        if debug { print("[Probe] manifest has no non-comment lines (empty or error) for \(sanitized)") }
-                    }
-                } catch {
-                    if debug { print("[Probe] failed to fetch manifest \(sanitized): \(error)") }
-                }
-            } else {
-                if debug { print("[Probe] cannot parse manifest URL: \(sanitized)") }
-            }
-        }
-
-        return sanitized
-    }
-
-    // MARK: - Session helpers
-
     struct ResolvedStream {
         let url: String?
         let playSessionId: String?
-        /// Server-reported status string. Populated asynchronously after stream starts.
-        /// nil on initial return — observe via the background task if needed.
         let serverStatus: String?
     }
 
@@ -324,8 +257,6 @@ struct JFOpenLiveStreamService {
         let resolvedDeviceName = deviceName ?? UIDevice.current.name
 
         do {
-            // FIX: Pre-open the live stream so the tuner starts buffering while
-            // we wait for PlaybackInfo to come back. Both calls run concurrently.
             async let liveStreamIdTask = openLiveStream(
                 base: base,
                 channelId: channelId,
@@ -348,8 +279,6 @@ struct JFOpenLiveStreamService {
                 debug: debug
             )
 
-            // Await both concurrently — server is warming up the tuner while we
-            // process the PlaybackInfo response
             let (liveStreamId, playbackResult) = await (liveStreamIdTask, try playbackInfoTask)
             if debug, let sid = liveStreamId { print("[ResolveStream] LiveStreamId pre-opened: \(sid)") }
 
@@ -360,8 +289,6 @@ struct JFOpenLiveStreamService {
             let supportsDirectPlay = primary?.isSupportsDirectPlay
             let playSessionId = playbackInitial.playSessionID
 
-            // FIX: Return the URL immediately without waiting for session status poll.
-            // Status polling runs in the background and is purely informational for UI.
             func makeResolved(url: String?, status: String?) -> ResolvedStream {
                 ResolvedStream(url: url, playSessionId: playSessionId, serverStatus: status)
             }
@@ -377,7 +304,6 @@ struct JFOpenLiveStreamService {
                     if let turl = transcodingUrlInitial, let final = buildAbsoluteURL(base: base, pathOrUrl: turl) {
                         let authed = ensureApiKeyParam(in: final, token: accessToken)
                         if debug { print("[ResolveStream] DirectPlay but no direct path; using TranscodingUrl -> \(authed)") }
-                        // FIX: Fire-and-forget background poll — don't block URL return
                         Task.detached {
                             _ = await pollAndDetermineSessionStatus(base: base, playSessionId: playSessionId, accessToken: accessToken, debug: debug)
                         }
@@ -411,7 +337,6 @@ struct JFOpenLiveStreamService {
                     return makeResolved(url: nil, status: "Unknown")
                 }
             } else {
-                // supportsDirectPlay missing: fall back to TS-based heuristic
                 let container = primary?.container?.lowercased()
                 let isTS = (container == "ts") || needsTranscodingForDirectPath(directPath)
 
@@ -461,8 +386,6 @@ struct JFOpenLiveStreamService {
             debug: debug
         )
     }
-
-    // MARK: - Session status polling (background only — never blocks URL return)
 
     private static func pollAndDetermineSessionStatus(
         base: String,
@@ -578,15 +501,18 @@ struct JFOpenLiveStreamService {
                             deviceId: deviceId,
                             deviceName: deviceName,
                             clientVersion: clientVersion,
-                            maxBitrate: 60_000_000, // Increased to 60Mbps
+                            maxBitrate: 60_000_000,
                             enableDirectPlay: false,
-                            enableDirectStream: false,
+                            
+                            // FIX 4: Do not force H.264 / TS in the fallback. Allow Direct Stream HEVC into fMP4 HLS!
+                            enableDirectStream: true,
                             enableTranscoding: true,
-                            requireAvc: true,
-                            audioCodec: "aac",
-                            videoCodec: "h264",
+                            requireAvc: false,
+                            audioCodec: "aac,ac3,eac3",
+                            videoCodec: "hevc,h265,h264",
                             transcodingProtocol: "hls",
-                            transcodingContainer: "ts",
+                            transcodingContainer: "mp4",
+                            
                             allowVideoStreamCopy: flags.videoCopy,
                             allowAudioStreamCopy: flags.audioCopy,
                             mediaSourceId: mediaSourceId,
@@ -594,7 +520,7 @@ struct JFOpenLiveStreamService {
                         )
                         return turl
                     } catch {
-                        if debug { print("[ForcedTranscode] error (videoCopy=\(flags.videoCopy) audioCopy=\(flags.audioCopy)): \(error)") }
+                        if debug { print("[ForcedTranscode] error: \(error)") }
                         return nil
                     }
                 }

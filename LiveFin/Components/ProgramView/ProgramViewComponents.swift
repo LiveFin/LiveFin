@@ -40,7 +40,6 @@ struct JFProgram: Identifiable, Hashable {
     let seriesId: String?
     let itemId: String?
 
-    // Prefer explicit IsMovie, but treat items with episode/series metadata as non-movies
     var isLikelyMovie: Bool {
         if isMovie {
             if let ep = episodeTitle, !ep.isEmpty { return false }
@@ -51,12 +50,10 @@ struct JFProgram: Identifiable, Hashable {
         return false
     }
 
-    // Convert Jellyfin ticks to seconds
     var runTimeSeconds: TimeInterval {
         if let t = runTimeTicks { return Double(t) / 10_000_000.0 } else { return 0 }
     }
 
-    // Unique key per airing — allows same ProgramId at different times or channels
     var airingKey: String {
         id + "|" + (channelId ?? "") + "|" + String(Int(startDate?.timeIntervalSince1970 ?? 0))
     }
@@ -86,7 +83,7 @@ struct JFProgram: Identifiable, Hashable {
             if trimmed != sIn { return isoFrac.date(from: trimmed) ?? isoPlain.date(from: trimmed) }
             return nil
         }
-        if let s = (json["StartDate"] as? String) ?? (json["StartDateUtc"] as? String) { self.startDate = parse(s) } else { self.startDate = nil }
+        if let s = (json["StartDate"] as? String) ?? (json["StartDateUtc"] as? String) ?? (json["PremiereDate"] as? String) { self.startDate = parse(s) } else { self.startDate = nil }
         if let e = (json["EndDate"] as? String) ?? (json["EndDateUtc"] as? String) { self.endDate = parse(e) } else { self.endDate = nil }
         self.channelId = json["ChannelId"] as? String
         self.channelName = json["ChannelName"] as? String
@@ -137,8 +134,6 @@ struct JFProgram: Identifiable, Hashable {
 @MainActor
 final class ProgramViewModel: ObservableObject {
 
-    // MARK: Published state
-
     @Published var extendedUpcoming: [JFProgram] = []
     @Published var channelSchedule: [JFProgram] = []
     @Published var relatedServer: [JFProgram] = []
@@ -150,8 +145,6 @@ final class ProgramViewModel: ObservableObject {
     @Published var streamItem: StreamURLItem? = nil
     @Published var playbackErrorMessage: String? = nil
 
-    // MARK: Dependencies
-
     let program: JFProgram
     private let appState: AppState
 
@@ -159,8 +152,6 @@ final class ProgramViewModel: ObservableObject {
         self.program = program
         self.appState = appState
     }
-
-    // MARK: Derived properties
 
     var effectiveChannelId: String? { program.channelId ?? resolvedChannelId }
 
@@ -231,7 +222,7 @@ final class ProgramViewModel: ObservableObject {
             let key = p.id + "|" + (p.channelId ?? "") + "|" + String(Int(start.timeIntervalSince1970))
             if seen.insert(key).inserted {
                 result.append(p)
-                if result.count >= 15 { break }
+                if result.count >= 200 { break }
             }
         }
         return result
@@ -265,10 +256,7 @@ final class ProgramViewModel: ObservableObject {
         )
     }
 
-    // MARK: Lifecycle
-
     func onAppear() {
-        // Seed channel name synchronously from cache so the UI shows it before async work begins
         if resolvedChannelName == nil {
             if let explicit = program.channelName, !explicit.isEmpty {
                 resolvedChannelName = explicit
@@ -280,7 +268,6 @@ final class ProgramViewModel: ObservableObject {
     }
 
     func load() async {
-        // Reset all state for this program
         isLoadingUpcoming = true
         isLoadingRelated = true
         loadRelatedImages = false
@@ -295,12 +282,9 @@ final class ProgramViewModel: ObservableObject {
         async let c: Void = fetchRelatedPrograms()
         _ = await (a, b, c)
 
-        // Ensure skeletons disable if nothing returned
         isLoadingUpcoming = false
         isLoadingRelated = false
     }
-
-    // MARK: Playback
 
     func startPlayback() async {
         guard let cid = effectiveChannelId else { return }
@@ -323,8 +307,6 @@ final class ProgramViewModel: ObservableObject {
         }
     }
 
-    // MARK: Private networking
-
     private nonisolated func normTitle(_ s: String) -> String {
         let allowed = CharacterSet.alphanumerics.union(.whitespaces)
         let filtered = s.lowercased().unicodeScalars.filter { allowed.contains($0) }
@@ -333,12 +315,9 @@ final class ProgramViewModel: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // Marking nonisolated allows networking/parsing off the main UI thread
     private nonisolated func fetchPrograms(serverURL: String, token: String, from basePath: String = "/LiveTv/Programs", params baseParams: [URLQueryItem]) async -> [JFProgram] {
         guard !serverURL.isEmpty else { return [] }
 
-        // Returns `nil` on structural failure, but `[]` if perfectly valid JSON with 0 results.
-        // This prevents falling back aggressively when queries naturally have no items.
         func attempt(_ items: [URLQueryItem]) async -> [JFProgram]? {
             guard let base = URL(string: serverURL)?.appendingPathComponent(basePath) else { return nil }
             var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)
@@ -351,17 +330,15 @@ final class ProgramViewModel: ObservableObject {
                 let (data, resp) = try await URLSession.shared.data(for: req)
                 guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return nil }
                 
-                // Array check
                 if let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
                     return arr.compactMap { JFProgram(json: $0) }
                 }
-                // Object with Items check
                 if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     if let items = obj["Items"] as? [[String: Any]] {
                         return items.compactMap { JFProgram(json: $0) }
                     }
                     if let total = obj["TotalRecordCount"] as? Int, total == 0 {
-                        return [] // Safely acknowledge it is an empty valid list.
+                        return []
                     }
                     return []
                 }
@@ -374,32 +351,15 @@ final class ProgramViewModel: ObservableObject {
         if let list = await attempt(baseParams) { return list }
         
         if let list = await attempt(baseParams.map { qi in
-            if qi.name == "startDate" { return URLQueryItem(name: "StartDateUtc", value: qi.value) }
-            if qi.name == "endDate" { return URLQueryItem(name: "EndDateUtc", value: qi.value) }
+            if qi.name == "MinStartDate" { return URLQueryItem(name: "StartDateUtc", value: qi.value) }
+            if qi.name == "MaxStartDate" { return URLQueryItem(name: "EndDateUtc", value: qi.value) }
             return qi
         }) { return list }
         
         if let list = await attempt(baseParams.map { qi in
-            if qi.name == "startDate" { return URLQueryItem(name: "StartDate", value: qi.value) }
-            if qi.name == "endDate" { return URLQueryItem(name: "EndDate", value: qi.value) }
-            if qi.name == "Limit" { return URLQueryItem(name: "limit", value: qi.value) }
-            if qi.name == "fields" { return URLQueryItem(name: "Fields", value: qi.value) }
+            if qi.name == "MinStartDate" { return URLQueryItem(name: "startDate", value: qi.value) }
+            if qi.name == "MaxStartDate" { return URLQueryItem(name: "endDate", value: qi.value) }
             return qi
-        }) { return list }
-        
-        if let list = await attempt(baseParams.map { qi in
-            switch qi.name {
-            case "channelIds": return URLQueryItem(name: "ChannelIds", value: qi.value)
-            case "userId": return URLQueryItem(name: "UserId", value: qi.value)
-            case "seriesId": return URLQueryItem(name: "SeriesId", value: qi.value)
-            case "genres": return URLQueryItem(name: "Genres", value: qi.value)
-            case "isMovie": return URLQueryItem(name: "IsMovie", value: qi.value)
-            case "isSeries": return URLQueryItem(name: "IsSeries", value: qi.value)
-            case "isNews": return URLQueryItem(name: "IsNews", value: qi.value)
-            case "isSports": return URLQueryItem(name: "IsSports", value: qi.value)
-            case "isKids": return URLQueryItem(name: "IsKids", value: qi.value)
-            default: return qi
-            }
         }) { return list }
         
         return []
@@ -450,13 +410,13 @@ final class ProgramViewModel: ObservableObject {
             isLoadingUpcoming = false; return
         }
         let now = Date()
-        guard let end = Calendar.current.date(byAdding: .day, value: 1, to: now) else { return }
+        guard let end = Calendar.current.date(byAdding: .day, value: 14, to: now) else { return }
         let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime]
         var params: [URLQueryItem] = [
             URLQueryItem(name: "channelIds", value: cid),
-            URLQueryItem(name: "startDate", value: iso.string(from: now)),
-            URLQueryItem(name: "endDate", value: iso.string(from: end)),
-            URLQueryItem(name: "Limit", value: "1000"),
+            URLQueryItem(name: "MinStartDate", value: iso.string(from: now)),
+            URLQueryItem(name: "MaxStartDate", value: iso.string(from: end)),
+            URLQueryItem(name: "Limit", value: "5000"),
             URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,ChannelId,ChannelName,IsRepeat,SeriesId,ItemId")
         ]
         if let uid = appState.user?.id { params.append(URLQueryItem(name: "userId", value: uid)) }
@@ -470,80 +430,97 @@ final class ProgramViewModel: ObservableObject {
         let now = Date()
         let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime]
         let targetSeriesId = program.seriesId
-        let targetItemId = program.itemId
-        let targetSeriesNameNorm: String? = program.seriesName.flatMap { $0.isEmpty ? nil : normTitle($0) }
+        
+        let term = program.seriesName?.isEmpty == false ? program.seriesName! : program.name
         let nameKey = normTitle(program.name)
+        let seriesNameKey = program.seriesName.flatMap { $0.isEmpty ? nil : normTitle($0) }
+        
         let serverURL = appState.serverURL
         let token = appState.accessToken
 
-        if let sid = targetSeriesId, !sid.isEmpty {
-            for days in [7, 14] {
-                guard let end = Calendar.current.date(byAdding: .day, value: days, to: now) else { continue }
-                var params: [URLQueryItem] = [
-                    URLQueryItem(name: "startDate", value: iso.string(from: now)),
-                    URLQueryItem(name: "endDate", value: iso.string(from: end)),
-                    URLQueryItem(name: "SeriesId", value: sid),
-                    URLQueryItem(name: "Limit", value: "1000"),
-                    URLQueryItem(name: "enableTotalRecordCount", value: "false"),
-                    URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,ChannelId,ChannelName,IsRepeat,SeriesId,ItemId")
-                ]
-                if let uid = appState.user?.id { params.append(URLQueryItem(name: "userId", value: uid)) }
-                let future = (await fetchPrograms(serverURL: serverURL, token: token, params: params)).filter { ($0.startDate ?? .distantPast) > now }
-                if !future.isEmpty { extendedUpcoming = dedupSorted(future); return }
-            }
-        }
+        guard let endWindow = Calendar.current.date(byAdding: .day, value: 14, to: now) else { return }
 
-        func matchesProgram(_ p: JFProgram) -> Bool {
+        let baseParams: [URLQueryItem] = [
+            URLQueryItem(name: "MinStartDate", value: iso.string(from: now)),
+            URLQueryItem(name: "MaxStartDate", value: iso.string(from: endWindow)),
+            URLQueryItem(name: "Limit", value: "3000"),
+            URLQueryItem(name: "Fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,ChannelId,ChannelName,IsRepeat,SeriesId,ItemId")
+        ]
+
+        var allFound: [JFProgram] = []
+
+        // Prong 1: Items Search (Forces text search through EPG across networks)
+        async let searchFuture: [JFProgram] = {
+            var p = baseParams
+            p.append(URLQueryItem(name: "SearchTerm", value: term))
+            p.append(URLQueryItem(name: "IncludeItemTypes", value: "Program"))
+            p.append(URLQueryItem(name: "Recursive", value: "true"))
+            if let uid = appState.user?.id { p.append(URLQueryItem(name: "userId", value: uid)) }
+            return await fetchPrograms(serverURL: serverURL, token: token, from: "/Items", params: p)
+        }()
+
+        // Prong 2: Explicit ID search (Matches native Jellyfin series linking)
+        async let seriesFuture: [JFProgram] = {
+            guard let sid = targetSeriesId, !sid.isEmpty else { return [] }
+            var p = baseParams
+            p.append(URLQueryItem(name: "SeriesId", value: sid))
+            p.append(URLQueryItem(name: "librarySeriesId", value: sid))
+            if let uid = appState.user?.id { p.append(URLQueryItem(name: "userId", value: uid)) }
+            return await fetchPrograms(serverURL: serverURL, token: token, from: "/LiveTv/Programs", params: p)
+        }()
+        
+        // Prong 3: Name fallback (In case SearchTerm is unsupported but Name works)
+        async let nameFuture: [JFProgram] = {
+            var p = baseParams
+            p.append(URLQueryItem(name: "Name", value: term))
+            if let uid = appState.user?.id { p.append(URLQueryItem(name: "userId", value: uid)) }
+            return await fetchPrograms(serverURL: serverURL, token: token, from: "/LiveTv/Programs", params: p)
+        }()
+
+        let (res1, res2, res3) = await (searchFuture, seriesFuture, nameFuture)
+        allFound.append(contentsOf: res1)
+        allFound.append(contentsOf: res2)
+        allFound.append(contentsOf: res3)
+
+        // Aggressive local client filter to wipe out irrelevant/random payloads
+        let matched = allFound.filter { p in
             guard let s = p.startDate, s > now else { return false }
-            if p.id == program.id { return true }
-            if let pi = p.itemId, let ti = targetItemId, !ti.isEmpty, pi == ti { return true }
-            if normTitle(p.name) == nameKey { return true }
+            if p.id == program.id { return false } // Don't show current block
+            
+            let pName = normTitle(p.name)
+            let pSeries = p.seriesName.flatMap { $0.isEmpty ? nil : normTitle($0) }
+            
+            if pName == nameKey { return true }
+            if let csk = seriesNameKey, let psk = pSeries, csk == psk { return true }
+            if let csk = seriesNameKey, pName == csk { return true }
             if let sid = targetSeriesId, !sid.isEmpty, p.seriesId == sid { return true }
-            if let tsn = targetSeriesNameNorm, let psn = p.seriesName, normTitle(psn) == tsn { return true }
+            
             return false
         }
 
-        func queryWindow(start: Date, days: Int) async -> [JFProgram] {
-            guard let end = Calendar.current.date(byAdding: .day, value: days, to: start) else { return [] }
-            var params: [URLQueryItem] = [
-                URLQueryItem(name: "startDate", value: iso.string(from: start)),
-                URLQueryItem(name: "endDate", value: iso.string(from: end)),
-                URLQueryItem(name: "Limit", value: "1000"),
-                URLQueryItem(name: "enableTotalRecordCount", value: "false"),
-                URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,ChannelId,ChannelName,IsRepeat,SeriesId,ItemId")
-            ]
-            if let uid = appState.user?.id { params.append(URLQueryItem(name: "userId", value: uid)) }
-            return await fetchPrograms(serverURL: serverURL, token: token, params: params).filter { matchesProgram($0) }
-        }
-
-        var results = await queryWindow(start: now, days: 7)
-        if results.isEmpty { results = await queryWindow(start: now, days: 14) }
-
-        if results.isEmpty {
-            var aggregated: [JFProgram] = []
-            for offset in stride(from: 0, through: 13, by: 7) {
-                let start = Calendar.current.date(byAdding: .day, value: offset, to: now) ?? now
-                aggregated.append(contentsOf: await queryWindow(start: start, days: min(7, 14 - offset)))
-            }
-            results = aggregated
-        }
-
-        extendedUpcoming = dedupSorted(results)
+        extendedUpcoming = dedupSorted(matched)
     }
 
     private func scoreAndFilter(pool: [JFProgram]) -> [JFProgram] {
         let baseGenres = Set(program.genres ?? [])
-        let seriesId = program.seriesId
         let cid = effectiveChannelId
+        let currentNameKey = normTitle(program.name)
+        let currentSeriesKey = program.seriesName.flatMap { $0.isEmpty ? nil : normTitle($0) }
 
         var scored: [(JFProgram, Int)] = []
         for p in pool where p.id != program.id {
+            let pNameKey = normTitle(p.name)
+            let pSeriesKey = p.seriesName.flatMap { $0.isEmpty ? nil : normTitle($0) }
+
+            if pNameKey == currentNameKey { continue }
+            if let csk = currentSeriesKey, let psk = pSeriesKey, csk == psk { continue }
+            if let csk = currentSeriesKey, pNameKey == csk { continue }
+            if let psk = pSeriesKey, psk == currentNameKey { continue }
+
             var score = 0
-            if let s = seriesId, !s.isEmpty, p.seriesId == s { score += 60 }
             if let cid, let pcid = p.channelId, cid == pcid { score += 10 }
             let overlap = baseGenres.intersection(Set(p.genres ?? []))
             if !overlap.isEmpty { score += overlap.count * 6 }
-            if normTitle(p.name) == normTitle(program.name) { score += 4 }
             if program.isLikelyMovie && p.isLikelyMovie { score += 2 }
             if program.isSeries && p.isSeries { score += 2 }
             if program.isNews && p.isNews { score += 12 }
@@ -553,22 +530,22 @@ final class ProgramViewModel: ObservableObject {
         }
 
         var seen: Set<String> = []
+        var seenNames: Set<String> = []
         var result: [JFProgram] = []
+        
         for (p, _) in scored.sorted(by: { lhs, rhs in
-            lhs.1 == rhs.1
-                ? (lhs.0.startDate ?? .distantFuture) < (rhs.0.startDate ?? .distantFuture)
-                : lhs.1 > rhs.1
+            lhs.1 == rhs.1 ? (lhs.0.startDate ?? .distantFuture) < (rhs.0.startDate ?? .distantFuture) : lhs.1 > rhs.1
         }) {
             let key = p.id + "|" + (p.channelId ?? "") + "|" + String(Int(p.startDate?.timeIntervalSince1970 ?? 0))
-            if seen.insert(key).inserted { result.append(p) }
-            if result.count >= 30 { break }
-        }
+            guard seen.insert(key).inserted else { continue }
 
-        let currentNameKey = normTitle(program.name)
-        var seenNames: Set<String> = []
+            let displayTitle = p.seriesName?.isEmpty == false ? normTitle(p.seriesName!) : normTitle(p.name)
+            guard seenNames.insert(displayTitle).inserted else { continue }
+
+            result.append(p)
+            if result.count >= 20 { break }
+        }
         return result
-            .filter { normTitle($0.name) != currentNameKey }
-            .filter { seenNames.insert(normTitle($0.name)).inserted }
     }
 
     private func fetchRelatedPrograms() async {
@@ -577,9 +554,9 @@ final class ProgramViewModel: ObservableObject {
               let future = Calendar.current.date(byAdding: .day, value: 7, to: now) else { return }
         let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime]
         var baseParams: [URLQueryItem] = [
-            URLQueryItem(name: "startDate", value: iso.string(from: past)),
-            URLQueryItem(name: "endDate", value: iso.string(from: future)),
-            URLQueryItem(name: "Limit", value: "300"), // Reduced payload to ease main thread
+            URLQueryItem(name: "MinStartDate", value: iso.string(from: past)),
+            URLQueryItem(name: "MaxStartDate", value: iso.string(from: future)),
+            URLQueryItem(name: "Limit", value: "300"),
             URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,ChannelId,ChannelName,IsRepeat,SeriesId,ItemId")
         ]
         
@@ -588,24 +565,11 @@ final class ProgramViewModel: ObservableObject {
         if let uid = appState.user?.id { baseParams.append(URLQueryItem(name: "userId", value: uid)) }
 
         var pool: [JFProgram] = []
-
-        // 1) Fast path — publish early if we get enough matches quickly
-        if let sid = program.seriesId, !sid.isEmpty {
-            var q = baseParams; q.append(URLQueryItem(name: "SeriesId", value: sid))
-            let seriesResults = await fetchPrograms(serverURL: serverURL, token: token, params: q)
-            pool.append(contentsOf: seriesResults)
-            if !seriesResults.isEmpty {
-                relatedServer = scoreAndFilter(pool: pool)
-                isLoadingRelated = false
-                loadRelatedImages = true
-                if relatedServer.count >= 15 { return } // Exit early if we have enough solid matches
-            }
-        }
-
-        // 2) Concurrent Execution for genres, tags, and same channel
         let tags = chips()
         let topGenres = Array(Set(program.genres ?? [])).prefix(2)
         let cId = effectiveChannelId
+
+        async let similarFuture = fetchSimilarRelated(serverURL: serverURL, token: token)
 
         await withTaskGroup(of: [JFProgram].self) { group in
             for tag in tags {
@@ -640,8 +604,6 @@ final class ProgramViewModel: ObservableObject {
 
             for await results in group {
                 pool.append(contentsOf: results)
-                
-                // Progressive updates -> the UI won't wait for all requests if enough came back early
                 if pool.count > 40 {
                     let newScores = self.scoreAndFilter(pool: pool)
                     if newScores.count >= 8 {
@@ -653,33 +615,30 @@ final class ProgramViewModel: ObservableObject {
             }
         }
 
-        // 3) Wide fallback only if everything else was completely empty
-        if pool.isEmpty {
-            pool.append(contentsOf: await fetchPrograms(serverURL: serverURL, token: token, params: baseParams))
+        var final = scoreAndFilter(pool: pool)
+        let similar = await similarFuture
+        if !similar.isEmpty {
+            final.insert(contentsOf: scoreAndFilter(pool: similar), at: 0)
         }
 
-        var final = scoreAndFilter(pool: pool)
-
-        // Fallback: channel schedule + extended upcoming
         if final.isEmpty {
             var seen: Set<String> = []
             var fallback: [JFProgram] = []
-            for p in (channelSchedule + extendedUpcoming)
-                .filter({ $0.id != program.id })
-                .sorted(by: { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }) {
+            for p in (channelSchedule + extendedUpcoming).filter({ $0.id != program.id }).sorted(by: { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }) {
                 let key = p.id + "|" + (p.channelId ?? "") + "|" + String(Int(p.startDate?.timeIntervalSince1970 ?? 0))
                 if seen.insert(key).inserted { fallback.append(p) }
                 if fallback.count >= 30 { break }
             }
-            final = fallback
+            final = scoreAndFilter(pool: fallback)
         }
 
-        // Final fallback: library similarity
-        if final.isEmpty {
-            final = await fetchSimilarRelated(serverURL: serverURL, token: token)
+        var seenNames: Set<String> = []
+        final = final.filter { p in
+            let displayTitle = p.seriesName?.isEmpty == false ? normTitle(p.seriesName!) : normTitle(p.name)
+            return seenNames.insert(displayTitle).inserted
         }
 
-        if !final.isEmpty { relatedServer = final }
+        if !final.isEmpty { relatedServer = Array(final.prefix(20)) }
         isLoadingRelated = false
         loadRelatedImages = true
     }
@@ -703,16 +662,25 @@ final class ProgramViewModel: ObservableObject {
             if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let items = obj["Items"] as? [[String: Any]] { out = items.compactMap { JFProgram(json: $0) } }
             else if let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] { out = arr.compactMap { JFProgram(json: $0) } }
+            
             var seen: Set<String> = []
             let nameKey = normTitle(program.name)
+            let seriesKey = program.seriesName.flatMap { $0.isEmpty ? nil : normTitle($0) }
+            
             return Array(out
                 .filter { seen.insert($0.id).inserted }
-                .filter { normTitle($0.name) != nameKey }
+                .filter { p in
+                    let pNameKey = normTitle(p.name)
+                    let pSeriesKey = p.seriesName.flatMap { $0.isEmpty ? nil : normTitle($0) }
+                    if pNameKey == nameKey { return false }
+                    if let csk = seriesKey, let psk = pSeriesKey, csk == psk { return false }
+                    if let csk = seriesKey, pNameKey == csk { return false }
+                    if let psk = pSeriesKey, psk == nameKey { return false }
+                    return true
+                }
                 .prefix(20))
         } catch { return [] }
     }
-
-    // MARK: Utility
 
     private func dedupSorted(_ items: [JFProgram]) -> [JFProgram] {
         var seen: Set<String> = []
@@ -805,6 +773,8 @@ struct UpcomingProgramRow: View {
     let referenceStart: Date?
     @EnvironmentObject private var appState: AppState
 
+    @State private var fetchedChannelName: String? = nil
+
     private var showName: Bool { program.name.caseInsensitiveCompare(referenceName) != .orderedSame }
     private var seasonEpisode: String? {
         if let s = program.parentIndexNumber, let e = program.indexNumber { return String(format: "S%02dE%02d", s, e) }
@@ -815,11 +785,13 @@ struct UpcomingProgramRow: View {
         if let series = program.seriesName, !series.isEmpty, series != program.name { return series }
         return nil
     }
-    private var channelName: String? {
+    
+    private var displayChannelName: String? {
         if let name = program.channelName, !name.isEmpty { return name }
-        if let id = program.channelId { return appState.channelNames[id] }
-        return nil
+        if let id = program.channelId, let cached = appState.channelNames[id], !cached.isEmpty { return cached }
+        return fetchedChannelName
     }
+    
     private var showNew: Bool {
         let notRepeat = (program.isRepeat == false) || (program.isRepeat == nil)
         let hasEpisodeOrSeries = (program.episodeTitle?.isEmpty == false)
@@ -872,7 +844,7 @@ struct UpcomingProgramRow: View {
                             .font(.caption).foregroundColor(.secondary)
                     }
                 }
-                if let cn = channelName, !cn.isEmpty {
+                if let cn = displayChannelName, !cn.isEmpty {
                     Text(cn).font(.caption2).foregroundColor(.secondary)
                 }
             }
@@ -883,6 +855,31 @@ struct UpcomingProgramRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .task(id: program.channelId) {
+            await fetchMissingChannelName()
+        }
+    }
+    
+    private func fetchMissingChannelName() async {
+        guard let cid = program.channelId else { return }
+        if program.channelName?.isEmpty == false { return }
+        if appState.channelNames[cid] != nil { return }
+        
+        guard !appState.serverURL.isEmpty,
+              let url = URL(string: appState.serverURL)?.appendingPathComponent("/LiveTv/Channels/\(cid)") else { return }
+        var req = URLRequest(url: url); req.httpMethod = "GET"
+        if !appState.accessToken.isEmpty { req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token") }
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return }
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let name = obj["Name"] as? String {
+                await MainActor.run {
+                    appState.channelNames[cid] = name
+                    self.fetchedChannelName = name
+                }
+            }
+        } catch { }
     }
 }
 

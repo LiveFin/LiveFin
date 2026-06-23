@@ -116,6 +116,7 @@ struct ChannelsView: View {
     @EnvironmentObject var appState: AppState
     @State private var channels: [LiveTvChannelDto] = []
     @State private var isLoading = false
+    @State private var isOffline = false
     @State private var error: String?
 
     // Natural sort helpers
@@ -125,6 +126,7 @@ struct ChannelsView: View {
         if parts.isEmpty { return [Int.max] }
         return parts.map { Int($0) ?? Int.max }
     }
+    
     private func channelLessThan(_ a: LiveTvChannelDto, _ b: LiveTvChannelDto) -> Bool {
         let aNum = a.number ?? ""
         let bNum = b.number ?? ""
@@ -139,23 +141,38 @@ struct ChannelsView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if isLoading {
-                    ProgressView()
-                } else if let error = error {
-                    Text("Error: \(error)").foregroundColor(.red)
+            ZStack {
+                if isLoading && channels.isEmpty {
+                    VStack {
+                        Spacer()
+                        ProgressView("Loading Channels...")
+                            .scaleEffect(1.2)
+                        Spacer()
+                    }
+                } else if isOffline && channels.isEmpty {
+                    errorStateView(
+                        title: "Cannot connect to your server. Please try again",
+                        message: "",
+                        icon: "network.slash"
+                    )
                 } else if channels.isEmpty {
-                    Text("No channels available.")
+                    errorStateView(
+                        title: "Jellyfin Not Configured",
+                        message: "Finish setting up your Jellyfin server with Live TV fully configured on the admin dashboard",
+                        icon: "server.rack"
+                    )
                 } else {
-                    ForEach(channels, id: \.id) { channel in
-                        NavigationLink(destination: ChannelDetailView(channel: channel)) {
-                            ChannelRowView(channel: channel, baseURL: appState.serverURL, apiKey: appState.apiKey)
+                    List {
+                        ForEach(channels, id: \.id) { channel in
+                            NavigationLink(destination: ChannelDetailView(channel: channel)) {
+                                ChannelRowView(channel: channel, baseURL: appState.serverURL, apiKey: appState.apiKey)
+                            }
                         }
                     }
+                    .id("channelsList")
+                    .refreshable { await fetchChannels(force: true) }
                 }
             }
-            .id("channelsList")
-            .refreshable { await fetchChannels(force: true) }
             .navigationTitle("Channels")
             .onAppear {
                 if channels.isEmpty {
@@ -169,6 +186,35 @@ struct ChannelsView: View {
         }
     }
 
+    @ViewBuilder
+    private func errorStateView(title: String, message: String, icon: String) -> some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 48))
+                    .foregroundColor(.secondary)
+                    .padding(.bottom, 8)
+                
+                Text(title)
+                    .font(.title2.bold())
+                    .multilineTextAlignment(.center)
+                
+                if !message.isEmpty {
+                    Text(message)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                }
+            }
+            .padding(.top, 120)
+            .frame(maxWidth: .infinity)
+        }
+        .refreshable {
+            await fetchChannels(force: true)
+        }
+    }
+
     struct ChannelsResponse: Codable { let items: [LiveTvChannelDto]?; enum CodingKeys: String, CodingKey { case items = "Items" } }
     struct ProgramsResponse: Codable { let items: [BaseItemDto]?; enum CodingKeys: String, CodingKey { case items = "Items" } }
 
@@ -176,24 +222,40 @@ struct ChannelsView: View {
         guard let client = appState.client else { error = "Client not initialized"; return }
         guard !appState.accessToken.isEmpty else { error = "Access token is missing"; return }
         if !force && !channels.isEmpty { return }
-        isLoading = true; error = nil; defer { isLoading = false }
+        
+        isLoading = true
+        isOffline = false
+        error = nil
+        defer { isLoading = false }
+        
         do {
             let url = client.configuration.url.appendingPathComponent("/LiveTv/Channels")
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+            
             let (data, response) = try await URLSession.shared.data(for: request)
-            if let http = response as? HTTPURLResponse, http.statusCode != 200 { error = "Failed to fetch channels. Status code: \(http.statusCode)"; return }
+            if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+                self.isOffline = true
+                self.error = "Failed to fetch channels. Status code: \(http.statusCode)"
+                return
+            }
+            
             let decoded = try JSONDecoder().decode(ChannelsResponse.self, from: data)
             let loaded = decoded.items ?? []
             self.channels = loaded.sorted(by: channelLessThan)
+            
             await fetchCurrentPrograms(for: channels)
             await saveChannelsToCache()
+            
             #if canImport(UIKit)
             prefetchChannelLogos(self.channels, baseURL: appState.serverURL, apiKey: appState.apiKey)
             #endif
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            self.error = error.localizedDescription
+            self.isOffline = true
+        }
     }
 
     func fetchCurrentPrograms(for channels: [LiveTvChannelDto]) async {

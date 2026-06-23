@@ -188,20 +188,221 @@ struct ProgramCard: View {
     }
 }
 
-// MARK: - Empty Section Placeholder
-
-struct EmptySectionPlaceholder: View {
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack { Text("No items right now").foregroundColor(.secondary) }
-                .frame(height: 20)
-                .padding(.horizontal)
-        }
-    }
-}
-
 // MARK: - Array Helper
 
 extension Array where Element == JFProgram {
     func prefixed(_ n: Int) -> [JFProgram] { Array(self.prefix(n)) }
+}
+
+// MARK: - Horizontal Library Items Row
+
+struct HorizontalLibraryItemsRow: View {
+    let items: [JFItemDto]
+    let style: RowStyle
+    var playDirectly: Bool = false
+    
+    @EnvironmentObject private var appState: AppState
+    @State private var streamContext: StreamContext? = nil
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(alignment: .top, spacing: 8) {
+                ForEach(items) { item in
+                    if playDirectly {
+                        Button {
+                            // Instantly build stream context for direct playback bypass
+                            streamContext = StreamContext(playlist: [item], startIndex: 0)
+                        } label: {
+                            LibraryItemCard(item: item, style: style)
+                                .environmentObject(appState)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        NavigationLink(destination: MediaItemDetailView(item: item).environmentObject(appState)) {
+                            LibraryItemCard(item: item, style: style)
+                                .environmentObject(appState)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 12)
+        }
+        .fullScreenCover(item: $streamContext) { context in
+            PlanktonPlayerView(
+                playlist: context.playlist,
+                startIndex: context.startIndex,
+                seriesName: nil,
+                appState: appState
+            )
+            .environmentObject(appState)
+        }
+    }
+}
+
+// MARK: - Library Item Card
+
+struct LibraryItemCard: View {
+    let item: JFItemDto
+    let style: RowStyle
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
+        
+        VStack(alignment: .leading, spacing: 4) {
+            ZStack(alignment: .bottomLeading) {
+                Color(UIColor.secondarySystemBackground)
+                    .frame(width: imageWidth, height: imageHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                
+                Group {
+                    if style == .landscape {
+                        if let backdropTag = item.backdropImageTag,
+                           let url = URL(string: "\(base)/Items/\(item.Id)/Images/Backdrop/0?tag=\(backdropTag)&maxWidth=400") {
+                            CachedAsyncImage(url: url) { phase in
+                                switch phase {
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                case .failure, .empty:
+                                    fallbackImage
+                                @unknown default:
+                                    fallbackImage
+                                }
+                            }
+                        } else if let primaryTag = item.primaryImageTag,
+                                  let url = URL(string: "\(base)/Items/\(item.Id)/Images/Primary?tag=\(primaryTag)&maxWidth=400") {
+                            CachedAsyncImage(url: url) { phase in
+                                switch phase {
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                case .failure, .empty:
+                                    fallbackImage
+                                @unknown default:
+                                    fallbackImage
+                                }
+                            }
+                        } else {
+                            fallbackImage
+                        }
+                    } else {
+                        if let primaryTag = item.primaryImageTag,
+                           let url = URL(string: "\(base)/Items/\(item.Id)/Images/Primary?tag=\(primaryTag)&maxWidth=300") {
+                            CachedAsyncImage(url: url) { phase in
+                                switch phase {
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                case .failure, .empty:
+                                    fallbackImage
+                                @unknown default:
+                                    fallbackImage
+                                }
+                            }
+                        } else {
+                            fallbackImage
+                        }
+                    }
+                }
+                .frame(width: imageWidth, height: imageHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                
+                if let progress = progressRatio, progress > 0, progress < 1 {
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(Color.black.opacity(0.35)).frame(height: 4)
+                        Rectangle().fill(Color.blue).frame(width: imageWidth * progress, height: 4)
+                    }
+                    .clipShape(Capsule())
+                    .padding(6)
+                }
+            }
+            .frame(width: imageWidth, height: imageHeight)
+            
+            // Item details
+            Text(displayTitle)
+                .font(.headline)
+                .lineLimit(1)
+                .foregroundColor(.primary)
+                .frame(maxWidth: imageWidth, alignment: .leading)
+            
+            if let subtitle = itemSubtitle {
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: imageWidth, alignment: .leading)
+            }
+            
+            if let secondaryInfo = secondaryInfoLine {
+                Text(secondaryInfo)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: imageWidth, alignment: .leading)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.bottom, 12)
+    }
+
+    private var imageWidth: CGFloat  { style == .portrait ? 120 : 220 }
+    private var imageHeight: CGFloat { style == .portrait ? 180 : 124 }
+
+    private var displayTitle: String {
+        if item.Type.lowercased() == "episode", let seriesName = item.SeriesName, !seriesName.isEmpty {
+            return seriesName
+        }
+        return item.Name
+    }
+
+    private var itemSubtitle: String? {
+        if item.Type.lowercased() == "episode" {
+            let s = item.ParentIndexNumber.map { String(format: "S%02d", $0) } ?? ""
+            let e = item.IndexNumber.map { String(format: "E%02d", $0) } ?? ""
+            let se = [s, e].filter { !$0.isEmpty }.joined()
+            
+            if !se.isEmpty {
+                return "\(se) • \(item.Name)"
+            } else {
+                return item.Name
+            }
+        }
+        return item.Genres?.first
+    }
+
+    @ViewBuilder
+    private var fallbackImage: some View {
+        VStack(spacing: 8) {
+            Image(systemName: item.Type == "Series" ? "tv" : "film")
+                .font(.system(size: style == .portrait ? 28 : 24))
+                .foregroundColor(.secondary)
+            Text(item.Name)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .padding(.horizontal, 6)
+        }
+        .frame(width: imageWidth, height: imageHeight)
+        .background(Color(UIColor.secondarySystemBackground))
+    }
+
+    private var secondaryInfoLine: String? {
+        if let year = item.ProductionYear {
+            return String(year)
+        }
+        return nil
+    }
+
+    private var progressRatio: Double? {
+        guard let ticks = item.UserData?.PlaybackPositionTicks, ticks > 0,
+              let total = item.RunTimeTicks, total > 0 else { return nil }
+        return min(max(Double(ticks) / Double(total), 0.0), 1.0)
+    }
 }

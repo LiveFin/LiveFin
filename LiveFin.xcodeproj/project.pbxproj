@@ -69,15 +69,6 @@
 			);
 			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
 		};
-		EB76D37E2F0CA9890068D1F9 /* Exceptions for "LIveFin Watch App" folder in "LiveFin Watch App" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				.xcassets/AccentColor.colorset/Contents.json,
-				.xcassets/AppIcon.appiconset/Contents.json,
-				.xcassets/Contents.json,
-			);
-			target = EBE19BBF2F058A7A00C21C63 /* LiveFin Watch App */;
-		};
 		EBCC8A812DA88C5E003DF1A6 /* Exceptions for "LiveFin" folder in "LiveFin" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -130,9 +121,6 @@
 		};
 		EBE19BC12F058A7A00C21C63 /* LIveFin Watch App */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				EB76D37E2F0CA9890068D1F9 /* Exceptions for "LIveFin Watch App" folder in "LiveFin Watch App" target */,
-			);
 			path = "LIveFin Watch App";
 			sourceTree = "<group>";
 		};
@@ -676,7 +664,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = LiveFin/LiveFin.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 39;
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -710,7 +698,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = LiveFin/LiveFin.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 39;
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;

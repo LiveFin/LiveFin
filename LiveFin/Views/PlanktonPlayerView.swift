@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AVKit
+import AVFoundation
 import Combine
 import MediaPlayer
 
@@ -51,6 +52,9 @@ final class PlanktonPlayerViewModel: ObservableObject {
     
     private var hasResumedCurrentItem = false
     private var lastReportedTicks: Int64 = 0
+    
+    // Local dictionary cache to prevent Apple's MPNowPlayingInfoCenter from returning nil/wiping out items
+    private var nowPlayingInfo: [String: Any] = [:]
 
     init(playlist: [JFItemDto], startIndex: Int, seriesName: String?, appState: AppState) {
         self.playlist = playlist
@@ -58,7 +62,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
         self.seriesName = seriesName
         self.appState = appState
         
-        // Changed to true so AVPlayer naturally helps manage stall/resume cycles
         self.player.automaticallyWaitsToMinimizeStalling = true
         
         if #available(iOS 15.0, *) {
@@ -86,7 +89,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
         keepUpObserver?.invalidate()
         NotificationCenter.default.removeObserver(self)
         
-        // Remove targets to avoid retaining issues and clean up commands
         let center = MPRemoteCommandCenter.shared()
         center.playCommand.removeTarget(nil)
         center.pauseCommand.removeTarget(nil)
@@ -95,6 +97,8 @@ final class PlanktonPlayerViewModel: ObservableObject {
         center.changePlaybackPositionCommand.removeTarget(nil)
         
         UIApplication.shared.endReceivingRemoteControlEvents()
+        
+        nowPlayingInfo.removeAll()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         player.pause()
         player.replaceCurrentItem(with: nil)
@@ -120,7 +124,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
         self.currentTime = 0
         self.duration = 0
         
-        // Reset tracks for the new item
         self.availableAudioTracks = []
         self.selectedAudioTrack = nil
         self.availableSubtitleTracks = []
@@ -141,6 +144,9 @@ final class PlanktonPlayerViewModel: ObservableObject {
                     enableDirectPlay: true,
                     enableDirectStream: true,
                     enableTranscoding: true,
+                    // EXPLICITLY request HEVC here to avoid server dropping HDR via unexpected H264 transcodes
+                    audioCodec: "aac,ac3,eac3,mp3,alac,flac",
+                    videoCodec: "hevc,h265,h264",
                     debug: true
                 )
                 
@@ -168,7 +174,12 @@ final class PlanktonPlayerViewModel: ObservableObject {
                     
                     Task.detached { @MainActor in
                         do {
-                            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [])
+                            try AVAudioSession.sharedInstance().setCategory(
+                                .playback,
+                                mode: .moviePlayback,
+                                policy: .longFormVideo,
+                                options: []
+                            )
                             try await AVAudioSession.sharedInstance().setActive(true)
                         } catch {
                             print("Failed to set audio session category/activate: \(error)")
@@ -182,6 +193,13 @@ final class PlanktonPlayerViewModel: ObservableObject {
                     
                     let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
                     let playerItem = AVPlayerItem(asset: asset)
+                    
+                    if #available(iOS 15.0, *) {
+                        Task {
+                            _ = try? await asset.load(.duration)
+                            _ = try? await asset.loadMediaSelectionGroup(for: .legible)
+                        }
+                    }
                     
                     self.observeItem(playerItem)
                     self.player.replaceCurrentItem(with: playerItem)
@@ -213,7 +231,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
             DispatchQueue.main.async { self?.isBuffering = observedItem.isPlaybackBufferEmpty }
         }
         
-        // Added to verify when the buffer has caught up enough to resume fluidly
         keepUpObserver = item.observe(\.isPlaybackLikelyToKeepUp, options: [.new]) { [weak self] observedItem, _ in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -234,10 +251,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
                     self.duration = observedItem.duration.seconds.isNaN ? 0 : observedItem.duration.seconds
                     self.isBuffering = false
                     
-                    // Retrieve and populate media selection tracks
                     self.populateMediaSelectionTracks(for: observedItem)
-                    
-                    // Update Now Playing timeline details when standard play readiness is confirmed
                     self.updateNowPlayingPlaybackState()
                     
                     if !self.hasResumedCurrentItem {
@@ -306,12 +320,12 @@ final class PlanktonPlayerViewModel: ObservableObject {
     }
     
     func skipForward() {
-        let newTime = min(currentTime + 15, duration)
+        let newTime = min(currentTime + 10, duration)
         seek(to: newTime)
     }
     
     func skipBackward() {
-        let newTime = max(currentTime - 15, 0)
+        let newTime = max(currentTime - 10, 0)
         seek(to: newTime)
     }
     
@@ -320,7 +334,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
             if finished {
                 DispatchQueue.main.async {
                     guard let self = self else { return }
-                    // Force AVPlayer to synchronize explicitly if UI state expects active playback
                     if self.isPlaying {
                         self.player.play()
                     }
@@ -343,7 +356,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
     private func populateMediaSelectionTracks(for playerItem: AVPlayerItem) {
         let asset = playerItem.asset
         
-        // 1. Audio Tracks
         if let audioGroup = asset.mediaSelectionGroup(forMediaCharacteristic: .audible) {
             self.availableAudioTracks = audioGroup.options
             self.selectedAudioTrack = playerItem.currentMediaSelection.selectedMediaOption(in: audioGroup)
@@ -352,7 +364,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
             self.selectedAudioTrack = nil
         }
         
-        // 2. Subtitle Tracks
         if let subtitleGroup = asset.mediaSelectionGroup(forMediaCharacteristic: .legible) {
             self.availableSubtitleTracks = subtitleGroup.options
             self.selectedSubtitleTrack = playerItem.currentMediaSelection.selectedMediaOption(in: subtitleGroup)
@@ -406,22 +417,41 @@ final class PlanktonPlayerViewModel: ObservableObject {
     private func updateNowPlayingInfo() {
         guard let item = currentItem else { return }
         
-        let title = seriesName ?? item.Name
-        let subtitle = seriesName != nil ? item.Name : ""
+        let isEpisode = item.Type.lowercased() == "episode"
+        let activeSeriesName = seriesName ?? item.SeriesName
         
-        var nowPlaying = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        nowPlaying[MPMediaItemPropertyTitle] = title
-        if !subtitle.isEmpty {
-            nowPlaying[MPMediaItemPropertyArtist] = subtitle
+        let title: String
+        let subtitle: String
+        
+        if isEpisode, let series = activeSeriesName, !series.isEmpty {
+            title = series
+            let s = item.ParentIndexNumber.map { String(format: "S%02d", $0) } ?? ""
+            let e = item.IndexNumber.map { String(format: "E%02d", $0) } ?? ""
+            let se = [s, e].filter { !$0.isEmpty }.joined()
+            if !se.isEmpty {
+                subtitle = "\(se) • \(item.Name)"
+            } else {
+                subtitle = item.Name
+            }
+        } else {
+            title = item.Name
+            subtitle = "" // Hide genres for movies as requested
         }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlaying
         
-        // Initial populate of standard scrubbing metadata
+        nowPlayingInfo[MPMediaItemPropertyTitle] = title
+        if !subtitle.isEmpty {
+            nowPlayingInfo[MPMediaItemPropertyArtist] = subtitle
+        } else {
+            nowPlayingInfo.removeValue(forKey: MPMediaItemPropertyArtist)
+        }
+        nowPlayingInfo[MPNowPlayingInfoPropertyMediaType] = 2 // Lock Screen layout formats as Video Media
+        
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
         updateNowPlayingPlaybackState()
         
         let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
         
-        if seriesName != nil {
+        if isEpisode {
             guard let url = URL(string: "\(base)/Users/\(appState.userID)/Items/\(item.Id)?Fields=SeriesThumbImageTag,SeriesPrimaryImageTag") else { return }
             var req = URLRequest(url: url)
             req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
@@ -436,6 +466,8 @@ final class PlanktonPlayerViewModel: ObservableObject {
                 
                 if let seriesId = json["SeriesId"] as? String, let seriesThumb = json["SeriesThumbImageTag"] as? String {
                     self.fetchAndSetNowPlayingArtwork(itemId: seriesId, imageType: "Thumb", tag: seriesThumb, base: base)
+                } else if let seriesId = json["SeriesId"] as? String, let seriesPrimary = json["SeriesPrimaryImageTag"] as? String {
+                    self.fetchAndSetNowPlayingArtwork(itemId: seriesId, imageType: "Primary", tag: seriesPrimary, base: base)
                 } else {
                     self.setFallbackArtwork(item: item, base: base)
                 }
@@ -447,33 +479,36 @@ final class PlanktonPlayerViewModel: ObservableObject {
     
     func updateNowPlayingPlaybackState() {
         guard currentItem != nil else { return }
-        var nowPlaying = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        nowPlaying[MPMediaItemPropertyPlaybackDuration] = duration
-        nowPlaying[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
-        nowPlaying[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlaying
+        
+        nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
+        nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
+        nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+        
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
     }
     
     private func setFallbackArtwork(item: JFItemDto, base: String) {
         if let thumb = item.ImageTags?["Thumb"] {
             fetchAndSetNowPlayingArtwork(itemId: item.Id, imageType: "Thumb", tag: thumb, base: base)
+        } else if let primaryTag = item.primaryImageTag {
+            fetchAndSetNowPlayingArtwork(itemId: item.Id, imageType: "Primary", tag: primaryTag, base: base)
         } else if let backdrop = item.backdropImageTag {
             fetchAndSetNowPlayingArtwork(itemId: item.Id, imageType: "Backdrop/0", tag: backdrop, base: base)
-        } else if let primary = item.primaryImageTag {
-            fetchAndSetNowPlayingArtwork(itemId: item.Id, imageType: "Primary", tag: primary, base: base)
         }
     }
     
     private func fetchAndSetNowPlayingArtwork(itemId: String, imageType: String, tag: String, base: String) {
         guard let url = URL(string: "\(base)/Items/\(itemId)/Images/\(imageType)?tag=\(tag)&maxWidth=800") else { return }
         
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+        var req = URLRequest(url: url)
+        req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+        
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
             guard let self = self else { return }
             guard let data = data, let image = UIImage(data: data) else { return }
             DispatchQueue.main.async {
-                var np = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-                np[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
-                MPNowPlayingInfoCenter.default().nowPlayingInfo = np
+                self.nowPlayingInfo[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = self.nowPlayingInfo
                 self.updateNowPlayingPlaybackState()
             }
         }.resume()
@@ -487,7 +522,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
         center.skipForwardCommand.addTarget { [weak self] _ in self?.skipForward(); return .success }
         center.skipBackwardCommand.addTarget { [weak self] _ in self?.skipBackward(); return .success }
         
-        // Scrubbing support from system widgets / Control Center
         center.changePlaybackPositionCommand.isEnabled = true
         center.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let self = self,
@@ -503,7 +537,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
     }
 }
 
-// MARK: - Views
+// MARK: - PlanktonPlayerView
 
 struct PlanktonPlayerView: View {
     @Environment(\.dismiss) private var dismiss
@@ -529,6 +563,10 @@ struct PlanktonPlayerView: View {
                     controlsVisible: $vm.controlsVisible,
                     onPlaybackError: { _ in }
                 ) { vc in
+                    // 💥 THE FIX: Prevents AVPlayerViewController from automatically
+                    // overwriting our robust local NowPlaying dictionary with empty MP4 header tags
+                    vc.updatesNowPlayingInfoCenter = false
+                    
                     vc.onTap = {
                         withAnimation(.easeOut(duration: 0.2)) { vm.controlsVisible.toggle() }
                         if vm.controlsVisible { vc.resetAutoHideTimer() }
@@ -561,7 +599,12 @@ struct PlanktonPlayerView: View {
             }
             Task { @MainActor in
                 do {
-                    try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [])
+                    try AVAudioSession.sharedInstance().setCategory(
+                        .playback,
+                        mode: .moviePlayback,
+                        policy: .longFormVideo,
+                        options: []
+                    )
                     try await AVAudioSession.sharedInstance().setActive(true)
                 } catch {
                     print("Failed to set audio session on Appear: \(error)")
@@ -594,7 +637,6 @@ struct PlanktonPlayerView: View {
     
     private var controlsOverlay: some View {
         ZStack {
-            // Background Gradients
             VStack(spacing: 0) {
                 LinearGradient(colors: [.black.opacity(0.85), .clear], startPoint: .top, endPoint: .bottom)
                     .frame(height: 140)
@@ -616,11 +658,30 @@ struct PlanktonPlayerView: View {
                     }
                     
                     VStack(alignment: .leading, spacing: 4) {
-                        if let seriesName = vm.seriesName {
-                            Text(seriesName).font(.title3.bold()).foregroundStyle(.white).shadow(radius: 2)
-                            Text(vm.currentItem?.Name ?? "").font(.subheadline.weight(.medium)).foregroundStyle(.white.opacity(0.85)).shadow(radius: 2)
+                        let isEpisode = vm.currentItem?.Type.lowercased() == "episode"
+                        let activeSeriesName = vm.seriesName ?? vm.currentItem?.SeriesName
+                        
+                        if isEpisode, let series = activeSeriesName, !series.isEmpty {
+                            Text(series)
+                                .font(.title3.bold())
+                                .foregroundStyle(.white)
+                                .shadow(radius: 2)
+                            
+                            let s = vm.currentItem?.ParentIndexNumber.map { String(format: "S%02d", $0) } ?? ""
+                            let e = vm.currentItem?.IndexNumber.map { String(format: "E%02d", $0) } ?? ""
+                            let se = [s, e].filter { !$0.isEmpty }.joined()
+                            let epName = vm.currentItem?.Name ?? ""
+                            let subtitleText = se.isEmpty ? epName : "\(se) • \(epName)"
+                            
+                            Text(subtitleText)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.white.opacity(0.85))
+                                .shadow(radius: 2)
                         } else {
-                            Text(vm.currentItem?.Name ?? "").font(.title3.bold()).foregroundStyle(.white).shadow(radius: 2)
+                            Text(vm.currentItem?.Name ?? "")
+                                .font(.title3.bold())
+                                .foregroundStyle(.white)
+                                .shadow(radius: 2)
                         }
                     }
                     .padding(.leading, 12)
@@ -713,7 +774,7 @@ struct PlanktonPlayerView: View {
                             .glassEffect(in: Circle())
                     }
                 }
-                .padding(.top, 16)
+                .padding(.top, 8)
                 .padding(.horizontal, 32)
                 .safeAreaPadding(.horizontal)
                 .safeAreaPadding(.top)
@@ -726,7 +787,7 @@ struct PlanktonPlayerView: View {
                         vm.skipBackward()
                         playerController?.resetAutoHideTimer()
                     } label: {
-                        Image(systemName: "gobackward.15")
+                        Image(systemName: "gobackward.10")
                             .font(.system(size: 24, weight: .regular))
                             .foregroundStyle(.white)
                             .frame(width: 56, height: 56)
@@ -748,7 +809,7 @@ struct PlanktonPlayerView: View {
                         vm.skipForward()
                         playerController?.resetAutoHideTimer()
                     } label: {
-                        Image(systemName: "goforward.15")
+                        Image(systemName: "goforward.10")
                             .font(.system(size: 24, weight: .regular))
                             .foregroundStyle(.white)
                             .frame(width: 56, height: 56)
@@ -759,64 +820,34 @@ struct PlanktonPlayerView: View {
                 Spacer()
                 
                 // ── Scrubber Bottom Bar ──
-                if #available(iOS 26.0, *) {
-                    HStack(spacing: 16) {
-                        Text(formatTime(vm.currentTime))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.white)
-                            .frame(width: 50, alignment: .trailing)
-                        
-                        Slider(value: $vm.currentTime, in: 0...max(vm.duration, 1)) { editing in
-                            vm.isScrubbing = editing
-                            if editing {
-                                playerController?.cancelTimer()
-                            } else {
-                                vm.seek(to: vm.currentTime)
-                                playerController?.resetAutoHideTimer()
-                            }
+                HStack(spacing: 16) {
+                    Text(formatTime(vm.currentTime))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.white)
+                        .frame(width: 50, alignment: .trailing)
+                    
+                    Slider(value: $vm.currentTime, in: 0...max(vm.duration, 1)) { editing in
+                        vm.isScrubbing = editing
+                        if editing {
+                            playerController?.cancelTimer()
+                        } else {
+                            vm.seek(to: vm.currentTime)
+                            playerController?.resetAutoHideTimer()
                         }
-                        
-                        Text(formatTime(max(vm.duration - vm.currentTime, 0)))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.white.opacity(0.7))
-                            .frame(width: 50, alignment: .leading)
                     }
-                    .padding(.vertical, 10)
-                    .padding(.horizontal, 24)
-                    .glassEffect(in: Capsule())
-                    .padding(.horizontal, 32)
-                    .padding(.bottom, 4)
-                    .safeAreaPadding(.horizontal)
-                } else {
-                    HStack(spacing: 16) {
-                        Text(formatTime(vm.currentTime))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.white)
-                            .frame(width: 50, alignment: .trailing)
-                        
-                        Slider(value: $vm.currentTime, in: 0...max(vm.duration, 1)) { editing in
-                            vm.isScrubbing = editing
-                            if editing {
-                                playerController?.cancelTimer()
-                            } else {
-                                vm.seek(to: vm.currentTime)
-                                playerController?.resetAutoHideTimer()
-                            }
-                        }
-                        .tint(.white)
-                        
-                        Text(formatTime(max(vm.duration - vm.currentTime, 0)))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.white.opacity(0.7))
-                            .frame(width: 50, alignment: .leading)
-                    }
-                    .padding(.vertical, 10)
-                    .padding(.horizontal, 24)
-                    .glassEffect(in: Capsule())
-                    .padding(.horizontal, 32)
-                    .padding(.bottom, 4)
-                    .safeAreaPadding(.horizontal)
+                    .tint(.white)
+                    
+                    Text(formatTime(max(vm.duration - vm.currentTime, 0)))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.7))
+                        .frame(width: 50, alignment: .leading)
                 }
+                .padding(.vertical, 10)
+                .padding(.horizontal, 24)
+                .glassEffect(in: Capsule())
+                .padding(.horizontal, 32)
+                .padding(.bottom, 4)
+                .safeAreaPadding(.horizontal)
             }
         }
     }

@@ -13,224 +13,153 @@ import Combine
 struct HomeView: View {
     @EnvironmentObject var appState: AppState
     @StateObject private var vm = HomeViewModel()
-    @State private var nowTimer = Timer.publish(every: 600, on: .main, in: .common).autoconnect()
+    
+    // FIX: Removed @State to prevent Swift Macro initialization crashes
+    let nowTimer = Timer.publish(every: 600, on: .main, in: .common).autoconnect()
+    
     @State private var hasAppeared: Bool = false
 
     var body: some View {
         NavigationStack {
             ZStack {
-                #if os(iOS)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Hi, \(appState.username)")
-                            .font(.largeTitle).bold()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal)
-                            .padding(.top, 8)
+                let hasChannels = !vm.channels.isEmpty
+                let hasPrograms = !(vm.onNow.isEmpty && vm.shows.isEmpty && vm.movies.isEmpty && vm.news.isEmpty && vm.sports.isEmpty && vm.kids.isEmpty)
+                let hasLibrary = !(vm.continueWatching.isEmpty && vm.upNext.isEmpty && vm.recentlyAdded.isEmpty)
+                let isCompletelyEmpty = !hasChannels && !hasPrograms && !hasLibrary
 
-                        let hasChannels = !vm.channels.isEmpty
-                        let hasPrograms = !(vm.onNow.isEmpty && vm.shows.isEmpty && vm.movies.isEmpty && vm.news.isEmpty && vm.sports.isEmpty && vm.kids.isEmpty)
-
-                        if vm.isLoading == false && !hasChannels && !hasPrograms && vm.lastSuccessfulFetch == nil {
-                            VStack(alignment: .leading, spacing: 8) {
-                                SectionHeader("Live TV not configured")
-                                Text("Check your server settings or add channels/program data to your Jellyfin server.")
-                                    .foregroundColor(.secondary)
-                                    .padding(.horizontal)
-                            }
-                        } else if hasChannels && !hasPrograms {
-                            SectionHeader("Channels")
-                            HorizontalChannelsRow(channels: vm.channels)
-                                .environmentObject(appState)
-
-                            if vm.isLoading == false {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("No program data available")
-                                        .font(.headline)
-                                        .padding(.horizontal)
-                                    Text("For the best Live TV experience, consider enabling an Electronic Program Guide (EPG) on your server.")
-                                        .foregroundColor(.secondary)
-                                        .padding(.horizontal)
-                                }
-                            }
-                        } else {
-                            SectionHeader("On Now")
-                            if !vm.onNow.isEmpty {
-                                HorizontalProgramsRow(programs: vm.onNow, style: .landscape)
-                                    .environmentObject(vm)
-                                    .padding(.bottom, 12)
-                            } else {
-                                EmptySectionPlaceholder()
-                            }
-
-                            SectionHeader("Channels")
-                            if !vm.channels.isEmpty {
-                                HorizontalChannelsRow(channels: vm.channels)
-                                    .environmentObject(appState)
-                            } else {
-                                EmptySectionPlaceholder()
-                            }
-
-                            SectionHeader("Shows")
-                            if !vm.shows.isEmpty {
-                                HorizontalProgramsRow(programs: vm.shows, style: .landscape)
-                                    .environmentObject(vm)
-                            } else {
-                                EmptySectionPlaceholder()
-                            }
-
-                            SectionHeader("Movies")
-                            if !vm.movies.isEmpty {
-                                HorizontalProgramsRow(programs: vm.movies, style: .portrait)
-                                    .environmentObject(vm)
-                            } else {
-                                EmptySectionPlaceholder()
-                            }
-
-                            SectionHeader("News")
-                            if !vm.news.isEmpty {
-                                HorizontalProgramsRow(programs: vm.news, style: .landscape)
-                                    .environmentObject(vm)
-                            } else {
-                                EmptySectionPlaceholder()
-                            }
-
-                            SectionHeader("Sports")
-                            if !vm.sports.isEmpty {
-                                HorizontalProgramsRow(programs: vm.sports, style: .landscape)
-                                    .environmentObject(vm)
-                            } else {
-                                EmptySectionPlaceholder()
-                            }
-
-                            SectionHeader("Kids")
-                            if !vm.kids.isEmpty {
-                                HorizontalProgramsRow(programs: vm.kids, style: .landscape)
-                                    .environmentObject(vm)
-                                    .padding(.bottom, 12)
-                            } else {
-                                EmptySectionPlaceholder()
-                            }
-                        }
-                    }
-                    .padding(.bottom, 24)
-                }
-                .refreshable { await performRefresh(force: true) }
-                #else
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Hi, \(appState.username)")
-                            .font(.largeTitle).bold()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal)
-                            .padding(.top, 8)
-
-                        let hasChannels = !vm.channels.isEmpty
-                        let hasPrograms = !(vm.onNow.isEmpty && vm.shows.isEmpty && vm.movies.isEmpty && vm.news.isEmpty && vm.sports.isEmpty && vm.kids.isEmpty)
-
-                        if vm.isLoading == false && !hasChannels && !hasPrograms && vm.lastSuccessfulFetch == nil {
-                            VStack(alignment: .leading, spacing: 8) {
-                                SectionHeader("Live TV not configured")
-                                Text("Live TV isn't set up — no channels or program listings were found. Check your server settings or add channels/program data to your Jellyfin server.")
-                                    .foregroundColor(.secondary)
-                                    .padding(.horizontal)
-                            }
-                        } else if hasChannels && !hasPrograms {
-                            SectionHeader("Channels")
-                            HorizontalChannelsRow(channels: vm.channels)
-                                .environmentObject(appState)
-
-                            if vm.isLoading == false {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("No program data available")
-                                        .font(.headline)
-                                        .padding(.horizontal)
-                                    Text("No program listings were found. For the best Live TV experience, consider enabling an Electronic Program Guide (EPG) on your server.")
-                                        .foregroundColor(.secondary)
-                                        .padding(.horizontal)
-                                }
-                            }
-                        } else {
-                            SectionHeader("On Now")
-                            if !vm.onNow.isEmpty {
-                                HorizontalProgramsRow(programs: vm.onNow, style: .landscape)
-                                    .environmentObject(vm)
-                                    .padding(.bottom, 12)
-                            } else {
-                                EmptySectionPlaceholder()
-                            }
-
-                            SectionHeader("Channels")
-                            if !vm.channels.isEmpty {
-                                HorizontalChannelsRow(channels: vm.channels)
-                                    .environmentObject(appState)
-                            } else {
-                                EmptySectionPlaceholder()
-                            }
-
-                            SectionHeader("Shows")
-                            if !vm.shows.isEmpty {
-                                HorizontalProgramsRow(programs: vm.shows, style: .landscape)
-                                    .environmentObject(vm)
-                            } else {
-                                EmptySectionPlaceholder()
-                            }
-
-                            SectionHeader("Movies")
-                            if !vm.movies.isEmpty {
-                                HorizontalProgramsRow(programs: vm.movies, style: .portrait)
-                                    .environmentObject(vm)
-                            } else {
-                                EmptySectionPlaceholder()
-                            }
-
-                            SectionHeader("News")
-                            if !vm.news.isEmpty {
-                                HorizontalProgramsRow(programs: vm.news, style: .landscape)
-                                    .environmentObject(vm)
-                            } else {
-                                EmptySectionPlaceholder()
-                            }
-
-                            SectionHeader("Sports")
-                            if !vm.sports.isEmpty {
-                                HorizontalProgramsRow(programs: vm.sports, style: .landscape)
-                                    .environmentObject(vm)
-                            } else {
-                                EmptySectionPlaceholder()
-                            }
-
-                            SectionHeader("Kids")
-                            if !vm.kids.isEmpty {
-                                HorizontalProgramsRow(programs: vm.kids, style: .landscape)
-                                    .environmentObject(vm)
-                                    .padding(.bottom, 12)
-                            } else {
-                                EmptySectionPlaceholder()
-                            }
-                        }
-                    }
-                    .padding(.bottom, 24)
-                }
-                .refreshable { await performRefresh(force: true) }
-                #endif
-
-                // Loading overlay when content already exists
-                if vm.isLoading && (!vm.channels.isEmpty || !vm.onNow.isEmpty || !vm.shows.isEmpty || !vm.movies.isEmpty || !vm.news.isEmpty || !vm.sports.isEmpty || !vm.kids.isEmpty) {
-                    Color.black.opacity(0.25).ignoresSafeArea()
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        .scaleEffect(1.4)
-                }
-
-                // Full-page spinner on first load with no cached content
-                if vm.isLoading && vm.channels.isEmpty && vm.onNow.isEmpty && vm.shows.isEmpty && vm.movies.isEmpty && vm.news.isEmpty && vm.sports.isEmpty && vm.kids.isEmpty {
+                if vm.isLoading && isCompletelyEmpty {
                     VStack {
                         Spacer()
-                        HStack { Spacer(); ProgressView().scaleEffect(1.2); Spacer() }
+                        ProgressView().scaleEffect(1.2)
                         Spacer()
                     }
-                    .frame(maxWidth: .infinity, minHeight: 200)
+                } else if vm.isOffline && isCompletelyEmpty {
+                    // Offline / Error State
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            Image(systemName: "network.slash")
+                                .font(.system(size: 48))
+                                .foregroundColor(.secondary)
+                                .padding(.bottom, 8)
+                            
+                            Text("Cannot connect to your server. Please try again")
+                                .font(.title2.bold())
+                                .foregroundColor(.primary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 32)
+                        }
+                        .padding(.top, 120)
+                    }
+                    .refreshable { await performRefresh(force: true) }
+                } else if !hasChannels && !hasLibrary {
+                    // Jellyfin Not Configured State
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            Image(systemName: "pc")
+                                .font(.system(size: 48))
+                                .foregroundColor(.secondary)
+                                .padding(.bottom, 8)
+                            
+                            Text("Jellyfin Not Configured")
+                                .font(.title2.bold())
+                                .foregroundColor(.primary)
+                            
+                            Text("Finish setting up your Jellyfin server with Live TV fully configured on the Admin Dashboard")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 32)
+                        }
+                        .padding(.top, 120)
+                    }
+                    .refreshable { await performRefresh(force: true) }
+                } else {
+                    // Main Content State
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("Hi, \(appState.username)")
+                                .font(.largeTitle).bold()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal)
+                                .padding(.top, 8)
+
+                            // No Guide Data Warning
+                            if hasChannels && !hasPrograms {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("For the best experience, add EPG data on your Admin Dashboard")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                        .padding(.horizontal)
+                                }
+                            }
+
+                            // Dynamic Sections (No Placeholders)
+                            if !vm.onNow.isEmpty {
+                                SectionHeader("On Now")
+                                HorizontalProgramsRow(programs: vm.onNow, style: .landscape)
+                                    .environmentObject(vm)
+                                    .padding(.bottom, 12)
+                            }
+
+                            if !vm.channels.isEmpty {
+                                SectionHeader("Channels")
+                                HorizontalChannelsRow(channels: vm.channels)
+                                    .environmentObject(appState)
+                            }
+
+                            if !vm.continueWatching.isEmpty {
+                                SectionHeader("Continue Watching")
+                                HorizontalLibraryItemsRow(items: vm.continueWatching, style: .landscape, playDirectly: true)
+                                    .environmentObject(appState)
+                            }
+
+                            if !vm.upNext.isEmpty {
+                                SectionHeader("Up Next")
+                                HorizontalLibraryItemsRow(items: vm.upNext, style: .landscape, playDirectly: true)
+                                    .environmentObject(appState)
+                            }
+
+                            if !vm.shows.isEmpty {
+                                SectionHeader("Shows")
+                                HorizontalProgramsRow(programs: vm.shows, style: .landscape)
+                                    .environmentObject(vm)
+                            }
+
+                            if !vm.movies.isEmpty {
+                                SectionHeader("Movies")
+                                HorizontalProgramsRow(programs: vm.movies, style: .portrait)
+                                    .environmentObject(vm)
+                            }
+
+                            if !vm.news.isEmpty {
+                                SectionHeader("News")
+                                HorizontalProgramsRow(programs: vm.news, style: .landscape)
+                                    .environmentObject(vm)
+                            }
+
+                            if !vm.sports.isEmpty {
+                                SectionHeader("Sports")
+                                HorizontalProgramsRow(programs: vm.sports, style: .landscape)
+                                    .environmentObject(vm)
+                            }
+
+                            if !vm.kids.isEmpty {
+                                SectionHeader("Kids")
+                                HorizontalProgramsRow(programs: vm.kids, style: .landscape)
+                                    .environmentObject(vm)
+                                    .padding(.bottom, 12)
+                            }
+
+                            if !vm.recentlyAdded.isEmpty {
+                                SectionHeader("Recently Added")
+                                HorizontalLibraryItemsRow(items: vm.recentlyAdded, style: .portrait, playDirectly: false)
+                                    .environmentObject(appState)
+                                    .padding(.bottom, 12)
+                            }
+                        }
+                        .padding(.bottom, 24)
+                    }
+                    .refreshable { await performRefresh(force: true) }
                 }
             }
             .task {
@@ -271,7 +200,14 @@ final class HomeViewModel: ObservableObject {
     @Published var kids: [JFProgram] = []
     @Published var channelNames: [String: String] = [:]
     @Published var channels: [JFChannel] = []
+    
+    // Core Library Sections
+    @Published var continueWatching: [JFItemDto] = []
+    @Published var upNext: [JFItemDto] = []
+    @Published var recentlyAdded: [JFItemDto] = []
+    
     @Published var isLoading: Bool = false
+    @Published var isOffline: Bool = false
     @Published var lastSuccessfulFetch: Date? = nil
 
     private let iso = ISO8601DateFormatter()
@@ -297,7 +233,6 @@ final class HomeViewModel: ObservableObject {
             if debugLog { print("HomeView: skipping refresh (cached)") }
             return
         }
-        // Cancel any in-flight refresh and start a fresh one
         currentRefreshTask?.cancel()
         let task = Task {
             await performRefreshWork(appState: appState, force: force)
@@ -309,7 +244,12 @@ final class HomeViewModel: ObservableObject {
     @MainActor
     private func performRefreshWork(appState: AppState, force: Bool) async {
         guard !Task.isCancelled else { return }
-        isLoading = true
+        
+        let isInitialLoad = self.channels.isEmpty && self.onNow.isEmpty && self.shows.isEmpty && self.movies.isEmpty && self.continueWatching.isEmpty
+        if isInitialLoad {
+            isLoading = true
+        }
+        
         if debugLog { print("HomeView.refresh start force=\(force)") }
         defer { isLoading = false; if debugLog { print("HomeView.refresh end") } }
 
@@ -321,22 +261,24 @@ final class HomeViewModel: ObservableObject {
         async let newsA    = fetchCategory(appState: appState, filter: .news)
         async let sportsA  = fetchCategory(appState: appState, filter: .sports)
         async let kidsA    = fetchCategory(appState: appState, filter: .kids)
+        
+        async let continueWatchingA = fetchContinueWatching(appState: appState)
+        async let upNextA           = fetchUpNext(appState: appState)
+        async let recentlyAddedA    = fetchRecentlyAdded(appState: appState)
 
-        let (names, channels, onNow, shows, movies, news, sports, kids) = await (namesA, chansA, onNowA, showsA, moviesA, newsA, sportsA, kidsA)
+        let (names, channels, onNow, shows, movies, news, sports, kids, continueWatching, upNext, recentlyAdded) = await (namesA, chansA, onNowA, showsA, moviesA, newsA, sportsA, kidsA, continueWatchingA, upNextA, recentlyAddedA)
 
         guard !Task.isCancelled else { if debugLog { print("HomeView.refresh cancelled after fetch") }; return }
+        
+        // Detect offline/error state if essential fetches all returned nil
+        let offlineCheck = (channels == nil && onNow == nil && continueWatching == nil && recentlyAdded == nil)
+        self.isOffline = offlineCheck
 
-        if debugLog { print("HomeView.refresh fetched: names=\(names.count) channels=\(channels.count) onNow=\(onNow.count) shows=\(shows.count) movies=\(movies.count) news=\(news.count) sports=\(sports.count) kids=\(kids.count)") }
-
-        let fetchedAny = !(names.isEmpty && channels.isEmpty && onNow.isEmpty && shows.isEmpty && movies.isEmpty && news.isEmpty && sports.isEmpty && kids.isEmpty)
-
-        let hadChannelsBefore = !self.channels.isEmpty || !self.channelNames.isEmpty
-        if !names.isEmpty || !channels.isEmpty || !hadChannelsBefore {
+        if let names = names, let channels = channels {
             self.channelNames = names
             self.channels = channels
         }
 
-        // Resolve missing channel names from local maps
         func ensureChannelNames(_ programs: [JFProgram]) -> [JFProgram] {
             programs.map { p in
                 if let name = p.channelName, !name.isEmpty { return p }
@@ -347,29 +289,35 @@ final class HomeViewModel: ObservableObject {
                 return p
             }
         }
-        self.onNow  = ensureChannelNames(onNow)
-        self.shows  = ensureChannelNames(shows)
-        self.movies = ensureChannelNames(movies)
-        self.news   = ensureChannelNames(news)
-        self.sports = ensureChannelNames(sports)
-        self.kids   = ensureChannelNames(kids)
+        
+        if let onNow = onNow { self.onNow = ensureChannelNames(onNow) }
+        if let shows = shows { self.shows = ensureChannelNames(shows) }
+        if let movies = movies { self.movies = ensureChannelNames(movies) }
+        if let news = news { self.news = ensureChannelNames(news) }
+        if let sports = sports { self.sports = ensureChannelNames(sports) }
+        if let kids = kids { self.kids = ensureChannelNames(kids) }
+        
+        if let continueWatching = continueWatching { self.continueWatching = continueWatching }
+        if let upNext = upNext { self.upNext = upNext }
+        if let recentlyAdded = recentlyAdded { self.recentlyAdded = recentlyAdded }
 
-        if fetchedAny { self.lastSuccessfulFetch = Date() }
-        if debugLog { print("HomeView: Section counts -> OnNow: \(self.onNow.count), Shows: \(self.shows.count), Movies: \(self.movies.count), News: \(self.news.count), Sports: \(self.sports.count), Kids: \(self.kids.count), Channels: \(self.channels.count)") }
+        if !offlineCheck {
+            self.lastSuccessfulFetch = Date()
+        }
     }
 
     // MARK: - Private Fetch Helpers
 
-    private func fetchChannelNames(appState: AppState) async -> [String: String] {
+    private func fetchChannelNames(appState: AppState) async -> [String: String]? {
         do {
-            guard let base = URL(string: appState.serverURL)?.appendingPathComponent("/LiveTv/Channels") else { return [:] }
+            guard let base = URL(string: appState.serverURL)?.appendingPathComponent("/LiveTv/Channels") else { return nil }
             var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)
             comps?.queryItems = [URLQueryItem(name: "Limit", value: "500"), URLQueryItem(name: "StartIndex", value: "0")]
             var req = URLRequest(url: comps?.url ?? base)
             req.httpMethod = "GET"
             if !appState.accessToken.isEmpty { req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token") }
             let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return [:] }
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return nil }
             var map: [String: String] = [:]
             if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let items = obj["Items"] as? [[String: Any]] {
                 for item in items { if let id = item["Id"] as? String, let name = item["Name"] as? String { map[id] = name } }
@@ -379,20 +327,20 @@ final class HomeViewModel: ObservableObject {
             return map
         } catch {
             print("HomeView: fetchChannelNames error: \(error.localizedDescription)")
-            return [:]
+            return nil
         }
     }
 
-    private func fetchChannels(appState: AppState) async -> [JFChannel] {
+    private func fetchChannels(appState: AppState) async -> [JFChannel]? {
         do {
-            guard let base = URL(string: appState.serverURL)?.appendingPathComponent("/LiveTv/Channels") else { return [] }
+            guard let base = URL(string: appState.serverURL)?.appendingPathComponent("/LiveTv/Channels") else { return nil }
             var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)
             comps?.queryItems = [URLQueryItem(name: "Limit", value: "500"), URLQueryItem(name: "StartIndex", value: "0")]
             var req = URLRequest(url: comps?.url ?? base)
             req.httpMethod = "GET"
             if !appState.accessToken.isEmpty { req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token") }
             let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return [] }
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return nil }
             var list: [JFChannel] = []
             if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let items = obj["Items"] as? [[String: Any]] {
                 for item in items { if let ch = JFChannel(json: item) { list.append(ch) } }
@@ -402,13 +350,13 @@ final class HomeViewModel: ObservableObject {
             return list.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         } catch {
             print("HomeView: fetchChannels error: \(error.localizedDescription)")
-            return []
+            return nil
         }
     }
 
-    private func fetchOnNow(appState: AppState) async -> [JFProgram] {
+    private func fetchOnNow(appState: AppState) async -> [JFProgram]? {
         do {
-            guard let base = URL(string: appState.serverURL)?.appendingPathComponent("/LiveTv/Programs") else { return [] }
+            guard let base = URL(string: appState.serverURL)?.appendingPathComponent("/LiveTv/Programs") else { return nil }
             var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)
             var q: [URLQueryItem] = [
                 URLQueryItem(name: "IsAiring", value: "true"),
@@ -417,12 +365,12 @@ final class HomeViewModel: ObservableObject {
             ]
             if let uid = appState.user?.id { q.append(URLQueryItem(name: "userId", value: uid)) }
             comps?.queryItems = q
-            guard let url = comps?.url else { return [] }
+            guard let url = comps?.url else { return nil }
             var req = URLRequest(url: url)
             req.httpMethod = "GET"
             if !appState.accessToken.isEmpty { req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token") }
             let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return [] }
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return nil }
             let now = Date()
             let items = parsePrograms(data: data).filter { notEnded($0, now: now) }
             return items.sorted { a, b in
@@ -437,15 +385,15 @@ final class HomeViewModel: ObservableObject {
             }
         } catch {
             print("HomeView: fetchOnNow error: \(error.localizedDescription)")
-            return []
+            return nil
         }
     }
 
-    private func fetchCategory(appState: AppState, filter: FilterKind) async -> [JFProgram] {
+    private func fetchCategory(appState: AppState, filter: FilterKind) async -> [JFProgram]? {
         do {
-            guard let base = URL(string: appState.serverURL)?.appendingPathComponent("/LiveTv/Programs") else { return [] }
+            guard let base = URL(string: appState.serverURL)?.appendingPathComponent("/LiveTv/Programs") else { return nil }
             let now = Date()
-            let start = now.addingTimeInterval(-6 * 3600)  // include currently-airing programs
+            let start = now.addingTimeInterval(-6 * 3600)
             let end = now.addingTimeInterval(24 * 3600)
 
             func filterParam(into q: inout [URLQueryItem]) {
@@ -459,7 +407,6 @@ final class HomeViewModel: ObservableObject {
             }
 
             var q: [URLQueryItem] = [
-                // Fixed Jellyfin API parameters (was startDate/endDate)
                 URLQueryItem(name: "minStartDate", value: iso.string(from: start)),
                 URLQueryItem(name: "maxStartDate", value: iso.string(from: end)),
                 URLQueryItem(name: "Limit",        value: "250"),
@@ -470,16 +417,15 @@ final class HomeViewModel: ObservableObject {
 
             var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)
             comps?.queryItems = q
-            guard let url = comps?.url else { return [] }
+            guard let url = comps?.url else { return nil }
             var req = URLRequest(url: url)
             req.httpMethod = "GET"
             if !appState.accessToken.isEmpty { req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token") }
             let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return [] }
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return nil }
             var items = parsePrograms(data: data).filter { notEnded($0, now: Date()) }
             if debugLog { print("HomeView: fetchCategory raw count (\(filter)): \(items.count)") }
 
-            // UTC fallback (Old Emby / Older Jellyfin servers)
             if items.isEmpty {
                 var qUtc: [URLQueryItem] = [
                     URLQueryItem(name: "minStartDate", value: iso.string(from: start)),
@@ -503,7 +449,6 @@ final class HomeViewModel: ObservableObject {
                 }
             }
 
-
             return items.sorted { a, b in
                 let la = a.startDate ?? Date.distantFuture
                 let lb = b.startDate ?? Date.distantFuture
@@ -516,19 +461,79 @@ final class HomeViewModel: ObservableObject {
             }.prefixed(40)
         } catch {
             print("HomeView: fetchCategory error: \(error.localizedDescription)")
-            return []
+            return nil
         }
     }
 
-    /// Returns true if the program hasn't fully ended yet.
-    /// Uses endDate if available, falls back to start + runTimeTicks, then keeps
-    /// anything with no timing info rather than silently dropping it.
+    private func fetchContinueWatching(appState: AppState) async -> [JFItemDto]? {
+        guard !appState.serverURL.isEmpty, !appState.accessToken.isEmpty, !appState.userID.isEmpty else { return nil }
+        let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
+        guard let url = URL(string: "\(base)/Users/\(appState.userID)/Items/Resume?limit=12&fields=Overview,ImageTags,BackdropImageTags,Genres,ProductionYear,OfficialRating,UserData,RunTimeTicks,SeriesName,SeriesId") else { return nil }
+        
+        var request = URLRequest(url: url)
+        request.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return nil }
+            
+            struct ItemsResponse: Decodable { let Items: [JFItemDto] }
+            let decoded = try JSONDecoder().decode(ItemsResponse.self, from: data)
+            return decoded.Items
+        } catch {
+            print("HomeViewModel: fetchContinueWatching error: \(error)")
+            return nil
+        }
+    }
+
+    private func fetchUpNext(appState: AppState) async -> [JFItemDto]? {
+        guard !appState.serverURL.isEmpty, !appState.accessToken.isEmpty, !appState.userID.isEmpty else { return nil }
+        let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
+        guard let url = URL(string: "\(base)/Shows/NextUp?userId=\(appState.userID)&limit=12&fields=Overview,ImageTags,BackdropImageTags,Genres,ProductionYear,OfficialRating,UserData,RunTimeTicks,SeriesName,SeriesId") else { return nil }
+        
+        var request = URLRequest(url: url)
+        request.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return nil }
+            
+            struct ItemsResponse: Decodable { let Items: [JFItemDto] }
+            let decoded = try JSONDecoder().decode(ItemsResponse.self, from: data)
+            return decoded.Items
+        } catch {
+            print("HomeViewModel: fetchUpNext error: \(error)")
+            return nil
+        }
+    }
+
+    private func fetchRecentlyAdded(appState: AppState) async -> [JFItemDto]? {
+        guard !appState.serverURL.isEmpty, !appState.accessToken.isEmpty, !appState.userID.isEmpty else { return nil }
+        let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
+        guard let url = URL(string: "\(base)/Users/\(appState.userID)/Items?sortBy=DateCreated&sortOrder=Descending&recursive=true&limit=12&includeItemTypes=Movie,Series&fields=Overview,ImageTags,BackdropImageTags,Genres,ProductionYear,OfficialRating,UserData,RunTimeTicks,SeriesName,SeriesId") else { return nil }
+        
+        var request = URLRequest(url: url)
+        request.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return nil }
+            
+            struct ItemsResponse: Decodable { let Items: [JFItemDto] }
+            let decoded = try JSONDecoder().decode(ItemsResponse.self, from: data)
+            return decoded.Items
+        } catch {
+            print("HomeViewModel: fetchRecentlyAdded error: \(error)")
+            return nil
+        }
+    }
+
     private func notEnded(_ p: JFProgram, now: Date) -> Bool {
         if let end = p.endDate { return end > now }
         if let start = p.startDate, let ticks = p.runTimeTicks {
             return start.addingTimeInterval(TimeInterval(Double(ticks) / 10_000_000.0)) > now
         }
-        return true  // no timing info — don't discard
+        return true
     }
 
     private func parsePrograms(data: Data) -> [JFProgram] {

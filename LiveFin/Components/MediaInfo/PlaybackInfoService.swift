@@ -38,40 +38,43 @@ struct JFPlaybackInfoService {
 
     private static func buildDeviceProfile(maxBitrate: Int?) -> [String: Any] {
         var profile: [String: Any] = [:]
-        profile["Name"] = "LiveFin iOS"
+        
+        profile["Name"] = "Apple LiveFin iOS"
+        
         if let max = maxBitrate { profile["MaxStreamingBitrate"] = max }
 
-        // DirectPlayProfiles: Defines what containers and codecs AVPlayer can play directly without server help.
+        // DirectPlayProfiles: Defines what AVPlayer can play directly without server help.
         profile["DirectPlayProfiles"] = [[
             "Container": "mp4,m4v,mov",
             "Type": "Video",
             "AudioCodec": "aac,ac3,eac3,mp3,alac,flac",
-            "VideoCodec": "h264,hevc,h265"
+            "VideoCodec": "h264" // 💥 FIX: Removed hevc/h265 here. If we DirectPlay an MP4 with hev1, iOS shows the QuickTime icon! We MUST force HLS for HEVC.
         ], [
-            "Container": "m3u8",
+            "Container": "m3u8", // Native Apple HLS
             "Type": "Video",
             "AudioCodec": "aac,ac3,eac3,mp3,flac",
-            "VideoCodec": "h264,hevc,h265"
+            "VideoCodec": "hevc,h265,h264"
         ], [
             "Container": "aac,mp3,alac,flac,m4a,m4b,wav",
             "Type": "Audio"
         ]]
 
-        // TranscodingProfiles: Configures how Jellyfin processes streams that do not support Direct Play.
+        // TranscodingProfiles: Configures how Jellyfin remuxes/transcodes streams.
+        // Re-ordered to ensure fMP4 container tries HEVC first over TS.
         profile["TranscodingProfiles"] = [[
-            "Container": "ts",
+            "Container": "mp4", // Triggers fMP4 (Fragmented MP4) in HLS for HEVC
             "Type": "Video",
-            "AudioCodec": "aac,ac3,mp3",
-            "VideoCodec": "h264", // Strictly h264 only for TS container!
+            "AudioCodec": "aac,ac3,mp3,alac,flac,eac3",
+            "VideoCodec": "hevc,h265,h264",
             "Protocol": "hls",
             "Context": "Streaming",
             "MaxAudioChannels": "6",
             "MinSegments": 2
         ], [
-            "Container": "mp4", // Fragmented MP4 (fmp4) container - supports HEVC natively on Apple platforms.
+            "Container": "ts",
             "Type": "Video",
-            "AudioCodec": "aac,ac3,mp3,alac,flac",
-            "VideoCodec": "h264,hevc,h265",
+            "AudioCodec": "aac,ac3,mp3",
+            "VideoCodec": "h264",
             "Protocol": "hls",
             "Context": "Streaming",
             "MaxAudioChannels": "6",
@@ -101,14 +104,13 @@ struct JFPlaybackInfoService {
         ]]
 
         // CodecProfiles: Declares exact capabilities of the iOS decoder.
-        // We explicitly prevent 'hev1' tagged video streams from being direct-played.
         profile["CodecProfiles"] = [[
             "Type": "Video",
             "Codec": "h264",
             "Conditions": [[
                 "Condition": "LessThanEqual",
                 "Property": "VideoLevel",
-                "Value": "52" // Up to Level 5.2 supported natively
+                "Value": "52"
             ]]
         ], [
             "Type": "Video",
@@ -116,15 +118,11 @@ struct JFPlaybackInfoService {
             "Conditions": [[
                 "Condition": "LessThanEqual",
                 "Property": "VideoLevel",
-                "Value": "183" // Boosted to Level 6.1 to support high-bitrate 4K HDR
+                "Value": "183"
             ], [
                 "Condition": "LessThanEqual",
                 "Property": "VideoBitDepth",
-                "Value": "10" // Explicitly allow up to 10-bit color depth (HEVC Main 10 / HDR10)
-            ], [
-                "Condition": "NotEquals",
-                "Property": "VideoCodecTag",
-                "Value": "hev1" // FIX: Blacklist 'hev1' tag. Forces Jellyfin to transcode/remux HEVC media stream with 'hvc1' tag for iOS native player compatibility.
+                "Value": "10" // Explicitly declare 10-bit color support
             ]]
         ], [
             "Type": "Audio",
@@ -148,7 +146,7 @@ struct JFPlaybackInfoService {
         deviceName: String? = nil,
         clientVersion: String = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.0",
         maxBitrate: Int? = nil,
-        enableDirectPlay: Bool = true,
+        enableDirectPlay: Bool = false,
         enableDirectStream: Bool = true,
         enableTranscoding: Bool = true,
         requireAvc: Bool? = nil,
@@ -162,8 +160,15 @@ struct JFPlaybackInfoService {
         transcodingUrl: String? = nil,
         debug: Bool = false
     ) async throws -> PlaybackInfoResponse {
-        let resolvedDeviceName: String
-        if let deviceName { resolvedDeviceName = deviceName } else { resolvedDeviceName = await MainActor.run { UIDevice.current.name } }
+        let deviceInfo = await MainActor.run {
+            return (
+                name: UIDevice.current.name,
+                model: UIDevice.current.model,
+                system: UIDevice.current.systemName,
+                version: UIDevice.current.systemVersion
+            )
+        }
+        let resolvedDeviceName = deviceName ?? deviceInfo.name
         let base = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
         let url = URL(string: "\(base)/Items/\(itemId)/PlaybackInfo")!
         var request = URLRequest(url: url)
@@ -178,8 +183,10 @@ struct JFPlaybackInfoService {
         request.setValue(resolvedDeviceName, forHTTPHeaderField: "X-Emby-Device-Name")
         request.setValue(deviceId, forHTTPHeaderField: "X-Emby-Device-Id")
         request.setValue(clientVersion, forHTTPHeaderField: "X-Emby-Client-Version")
-        let userAgent = "LiveFin/\(clientVersion) (iOS; \(resolvedDeviceName))"
+        
+        let userAgent = "LiveFin/\(clientVersion) (\(deviceInfo.model); \(deviceInfo.system) \(deviceInfo.version))"
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        
         var body: [String: Any] = [
             "UserId": userId,
             "MaxStreamingBitrate": maxBitrate ?? 60_000_000,
@@ -188,18 +195,23 @@ struct JFPlaybackInfoService {
             "EnableDirectStream": enableDirectStream,
             "EnableTranscoding": enableTranscoding,
             "EnableAdaptiveBitrateStreaming": true,
-            "RequireAvc": requireAvc ?? true
+            "RequireAvc": requireAvc ?? false
         ]
-        if let a = audioCodec { body["AudioCodec"] = a }
-        if let v = videoCodec { body["VideoCodec"] = v }
-        if let tp = transcodingProtocol { body["TranscodingProtocol"] = tp }
-        if let tc = transcodingContainer { body["TranscodingContainer"] = tc }
+        
+        // Ensure codecs are injected even if nil to stop server from defaulting to non-HDR H264 transcodes
+        body["AudioCodec"] = audioCodec ?? "aac,ac3,eac3,mp3,alac,flac"
+        body["VideoCodec"] = videoCodec ?? "hevc,h265,h264"
+        
+        body["TranscodingProtocol"] = transcodingProtocol ?? "hls"
+        body["TranscodingContainer"] = transcodingContainer ?? "mp4"
+        
         if let avs = allowVideoStreamCopy { body["AllowVideoStreamCopy"] = avs }
         if let aas = allowAudioStreamCopy { body["AllowAudioStreamCopy"] = aas }
         if let ms = mediaSourceId { body["MediaSourceId"] = ms }
         if enableTranscoding {
             body["DeviceProfile"] = buildDeviceProfile(maxBitrate: maxBitrate ?? 60_000_000)
         }
+        
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
@@ -220,7 +232,7 @@ struct JFPlaybackInfoService {
         deviceName: String? = nil,
         clientVersion: String = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.0",
         maxBitrate: Int? = nil,
-        enableDirectPlay: Bool = true,
+        enableDirectPlay: Bool = false,
         enableDirectStream: Bool = true,
         enableTranscoding: Bool = true,
         requireAvc: Bool? = nil,
@@ -234,8 +246,15 @@ struct JFPlaybackInfoService {
         transcodingUrl: String? = nil,
         debug: Bool = false
     ) async throws -> (PlaybackInfoResponse, String?, String?, String?) {
-        let resolvedDeviceName: String
-        if let deviceName { resolvedDeviceName = deviceName } else { resolvedDeviceName = await MainActor.run { UIDevice.current.name } }
+        let deviceInfo = await MainActor.run {
+            return (
+                name: UIDevice.current.name,
+                model: UIDevice.current.model,
+                system: UIDevice.current.systemName,
+                version: UIDevice.current.systemVersion
+            )
+        }
+        let resolvedDeviceName = deviceName ?? deviceInfo.name
         let base = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
         let url = URL(string: "\(base)/Items/\(itemId)/PlaybackInfo")!
         var request = URLRequest(url: url)
@@ -250,8 +269,10 @@ struct JFPlaybackInfoService {
         request.setValue(resolvedDeviceName, forHTTPHeaderField: "X-Emby-Device-Name")
         request.setValue(deviceId, forHTTPHeaderField: "X-Emby-Device-Id")
         request.setValue(clientVersion, forHTTPHeaderField: "X-Emby-Client-Version")
-        let userAgent = "LiveFin/\(clientVersion) (iOS; \(resolvedDeviceName))"
+        
+        let userAgent = "LiveFin/\(clientVersion) (\(deviceInfo.model); \(deviceInfo.system) \(deviceInfo.version))"
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        
         var body: [String: Any] = [
             "UserId": userId,
             "MaxStreamingBitrate": maxBitrate ?? 60_000_000,
@@ -260,18 +281,22 @@ struct JFPlaybackInfoService {
             "EnableDirectStream": enableDirectStream,
             "EnableTranscoding": enableTranscoding,
             "EnableAdaptiveBitrateStreaming": true,
-            "RequireAvc": requireAvc ?? true
+            "RequireAvc": requireAvc ?? false
         ]
-        if let a = audioCodec { body["AudioCodec"] = a }
-        if let v = videoCodec { body["VideoCodec"] = v }
-        if let tp = transcodingProtocol { body["TranscodingProtocol"] = tp }
-        if let tc = transcodingContainer { body["TranscodingContainer"] = tc }
+        
+        body["AudioCodec"] = audioCodec ?? "aac,ac3,eac3,mp3,alac,flac"
+        body["VideoCodec"] = videoCodec ?? "hevc,h265,h264"
+        
+        body["TranscodingProtocol"] = transcodingProtocol ?? "hls"
+        body["TranscodingContainer"] = transcodingContainer ?? "mp4"
+        
         if let avs = allowVideoStreamCopy { body["AllowVideoStreamCopy"] = avs }
         if let aas = allowAudioStreamCopy { body["AllowAudioStreamCopy"] = aas }
         if let ms = mediaSourceId { body["MediaSourceId"] = ms }
         if enableTranscoding {
             body["DeviceProfile"] = buildDeviceProfile(maxBitrate: maxBitrate ?? 60_000_000)
         }
+        
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {

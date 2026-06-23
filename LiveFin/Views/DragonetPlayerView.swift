@@ -86,18 +86,42 @@ final class DragonetPlayerViewModel: ObservableObject {
         }
     }
 
+    // 💥 FIX: THREAD-SAFE DEALLOCATION 💥
+    // Since deinit is nonisolated and can run on any background thread, we must capture
+    // references synchronously and dispatch AVPlayer/KVO mutations safely to the Main Queue.
     deinit {
-        if let obs = timeObserver { player.removeTimeObserver(obs) }
-        if let po = progressObserver { player.removeTimeObserver(po) }
-        playerItemObserver = nil
-        pauseObserver?.invalidate()
-        bufferEmptyObserver?.invalidate()
-        likelyToKeepUpObserver?.invalidate()
-        cancellables.removeAll()
-        Task { @MainActor in
+        // 1. Capture local references to avoid referencing 'self' inside the main queue block
+        let player = self.player
+        let tObserver = timeObserver
+        let pObserver = progressObserver
+        let rObserver = pauseObserver
+        let bObserver = bufferEmptyObserver
+        let lObserver = likelyToKeepUpObserver
+        let channelId = channel?.id
+        let state = appState
+
+        // 2. Safely perform AVPlayer and KVO teardown on the Main Queue
+        DispatchQueue.main.async {
+            if let tObserver = tObserver { player.removeTimeObserver(tObserver) }
+            if let pObserver = pObserver { player.removeTimeObserver(pObserver) }
+            
+            rObserver?.invalidate()
+            bObserver?.invalidate()
+            lObserver?.invalidate()
+            
+            // Ensure EPG Polling is clean if stopped abruptly
+            if channelId != nil {
+                state.stopEPGPolling()
+            }
+            
+            // Remote control event teardown
             UIApplication.shared.endReceivingRemoteControlEvents()
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         }
+
+        // Cancellables will automatically release when self is completely gone,
+        // but we explicitly remove them here to immediately halt any active pipelines.
+        cancellables.removeAll()
     }
 
     // MARK: Playback & Reporting
@@ -123,8 +147,14 @@ final class DragonetPlayerViewModel: ObservableObject {
 
     private func activateAudioSession() {
         do {
+            // 💥 FIX FOR AIRPLAY STUCK LOADING 💥
+            // Long form video policy ensures CoreMedia routing prepares buffer sizes
+            // optimized for remote television casting (AppleTV / Smart TV targets).
             try AVAudioSession.sharedInstance().setCategory(
-                .playback, mode: .moviePlayback, options: []
+                .playback,
+                mode: .moviePlayback,
+                policy: .longFormVideo,
+                options: []
             )
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
@@ -508,11 +538,13 @@ struct DragonetPlayerView: View {
                     apiKey: appState.accessToken,
                     channelId: targetId
                 )
-                .aspectRatio(contentMode: .fit)
+                .aspectRatio(contentMode: .fit) // Restored back to fit (as requested)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea()
                 .opacity(0.3)
-                .clipped()
+                // 💥 REMOVED .clipped() Modifier 💥
+                // This prevents SwiftUI from truncating the bottom edge to the safe area limits,
+                // fixing the cutout completely while preserving pristine fit layout.
             }
             
             ProgressView()
@@ -589,7 +621,7 @@ struct DragonetPlayerView: View {
                     }
                 }
                 .padding(.leading, 32)
-                .padding(.top, 24)
+                .padding(.top, 8) // 💥 MOVED UP: Reduced top padding from 24 to 8 💥
 
                 Spacer()
 
@@ -601,7 +633,7 @@ struct DragonetPlayerView: View {
                     closeButton
                 }
                 .padding(.trailing, 32)
-                .padding(.top, 24)
+                .padding(.top, 8) // 💥 MOVED UP: Reduced top padding from 24 to 8 💥
             }
             .safeAreaPadding(.horizontal)
             .safeAreaPadding(.top)
@@ -755,4 +787,3 @@ extension View {
         }
     }
 }
-

@@ -770,4 +770,3 @@ struct DemoMediaItemDetailView: View {
     }
 }
 
-```

@@ -59,7 +59,12 @@ struct DragonetPlayer: UIViewControllerRepresentable {
         // When we hide the controls, it conflicts with our manual logic and pauses the app.
         // We disable Apple's built-in managers so our manual PiP Controller runs flawlessly.
         vc.allowsPictureInPicturePlayback = false
-        vc.updatesNowPlayingInfoCenter = false
+        
+        // 💥 FIX FOR AIRPLAY STUCK LOADING 💥
+        // Setting this to true allows AVPlayerViewController to share stream and route configurations
+        // with external hardware targets.
+        vc.updatesNowPlayingInfoCenter = true
+        
         vc.videoGravity = .resizeAspect
         
         vc.coordinator = context.coordinator

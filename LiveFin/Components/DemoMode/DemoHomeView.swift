@@ -36,9 +36,7 @@ struct DemoHomeView: View {
                             }
                             .padding(.horizontal)
                         }
-                    } else {
-                        EmptySectionPlaceholder()
-                    }
+                    } 
 
                     // Channels (logos)
                     SectionHeader("Channels")
@@ -49,41 +47,31 @@ struct DemoHomeView: View {
                     SectionHeader("Shows")
                     if !DemoChannelsData.channels.isEmpty {
                         HorizontalDemoSimpleRow(items: DemoChannelsData.channels.map { "\($0.name) — Best of" })
-                    } else {
-                        EmptySectionPlaceholder()
-                    }
+                    } 
 
                     // Movies
                     SectionHeader("Movies")
                     if !DemoChannelsData.channels.isEmpty {
                         HorizontalDemoSimpleRow(items: DemoChannelsData.channels.map { "\($0.name) — Movie" })
-                    } else {
-                        EmptySectionPlaceholder()
-                    }
+                    } 
 
                     // News
                     SectionHeader("News")
                     if !DemoChannelsData.channels.isEmpty {
                         HorizontalDemoSimpleRow(items: DemoChannelsData.channels.map { "\($0.name) — News" })
-                    } else {
-                        EmptySectionPlaceholder()
-                    }
+                    } 
 
                     // Sports
                     SectionHeader("Sports")
                     if !DemoChannelsData.channels.isEmpty {
                         HorizontalDemoSimpleRow(items: DemoChannelsData.channels.map { "\($0.name) — Highlights" })
-                    } else {
-                        EmptySectionPlaceholder()
-                    }
+                    } 
 
                     // Kids
                     SectionHeader("Kids")
                     if !DemoChannelsData.channels.isEmpty {
                         HorizontalDemoSimpleRow(items: DemoChannelsData.channels.map { "\($0.name) — Kids" })
-                    } else {
-                        EmptySectionPlaceholder()
-                    }
+                    } 
 
                     Spacer(minLength: 24)
                 }
