@@ -51,9 +51,6 @@ final class DragonetPlayerController: AVPlayerViewController {
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         tap.numberOfTapsRequired = 1
         
-        // 💥 FIX FOR BUGGY GESTURES 💥
-        // Prevents the tap gesture from swallowing touches meant for internal views
-        // or aggressively cancelling SwiftUI interactions.
         tap.cancelsTouchesInView = false
         
         view.addGestureRecognizer(tap)
@@ -61,8 +58,6 @@ final class DragonetPlayerController: AVPlayerViewController {
     
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        
-        // Force it to play the exact moment the view is fully presented on the screen.
         player?.play()
     }
 
@@ -78,7 +73,6 @@ final class DragonetPlayerController: AVPlayerViewController {
     }
     override var shouldAutorotate: Bool { true }
     
-    // 💥 FIX FOR LAYOUT SHIFT 💥
     override var prefersStatusBarHidden: Bool { return true }
     override var prefersHomeIndicatorAutoHidden: Bool { return true }
 

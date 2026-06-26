@@ -161,7 +161,7 @@ class LibraryViewModel: ObservableObject {
 
     private func fetchRecentlyAdded(appState: AppState) async -> [JFItemDto]? {
         let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
-        guard let url = URL(string: "\(base)/Users/\(appState.userID)/Items?sortBy=DateCreated&sortOrder=Descending&recursive=true&limit=12&includeItemTypes=Movie,Series&fields=Overview,ImageTags,BackdropImageTags,Genres,ProductionYear,OfficialRating,UserData,RunTimeTicks,SeriesName,SeriesId") else { return nil }
+        guard let url = URL(string: "\(base)/Users/\(appState.userID)/Items?sortBy=DateCreated&sortOrder=Descending&recursive=true&limit=25&includeItemTypes=Movie,Series&fields=Overview,ImageTags,BackdropImageTags,Genres,ProductionYear,OfficialRating,UserData,RunTimeTicks,SeriesName,SeriesId") else { return nil }
         
         var request = URLRequest(url: url)
         request.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
@@ -414,7 +414,7 @@ struct HorizontalLibrariesRow: View {
     }
 }
 
-struct LibraryRowItem: View {
+struct DemoLibraryRowItem: View {
     let title: String
     let icon: String
     

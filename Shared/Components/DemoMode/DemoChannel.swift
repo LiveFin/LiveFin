@@ -103,7 +103,7 @@ struct DemoHomeView: View {
 
 // MARK: - Demo Subviews
 
-private struct SectionHeader: View {
+private struct DemoSectionHeader: View {
     let title: String
     init(_ title: String) { self.title = title }
     var body: some View {
@@ -113,7 +113,7 @@ private struct SectionHeader: View {
     }
 }
 
-private struct DemoNowCard: View {
+private struct DemoDemoNowCard: View {
     let channel: DemoChannel
 
     var body: some View {
@@ -892,12 +892,17 @@ struct DemoLibraryPosterCard: View {
                         if let tag = item.primaryImageTag,
                            let url = URL(string: "\(serverURL)/Items/\(item.Id)/Images/Primary?tag=\(tag)&maxWidth=400") {
                             AsyncImage(url: url) { phase in
-                                switch phase {
-                                case .success(let image):
-                                    image.resizable().aspectRatio(contentMode: .fill)
-                                case .failure: fallthrough
-                                case .empty: ProgressView().scaleEffect(0.8)
-                                @unknown default: EmptyView()
+                                Group {
+                                    switch phase {
+                                    case .success(let image):
+                                        image.resizable().aspectRatio(contentMode: .fill)
+                                    case .failure:
+                                        ProgressView().scaleEffect(0.8)
+                                    case .empty:
+                                        ProgressView().scaleEffect(0.8)
+                                    @unknown default:
+                                        EmptyView()
+                                    }
                                 }
                             }
                         } else {
@@ -1209,6 +1214,36 @@ struct DemoMediaItemDetailView: View {
             isLoadingEpisodes = false
         } catch {
             print("Failed to fetch episodes: \(error)"); isLoadingEpisodes = false
+        }
+    }
+}
+// MARK: - Demo Subviews (Add this struct)
+private struct DemoNowCard: View {
+    let channel: DemoChannel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack(alignment: .bottomLeading) {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(UIColor.secondarySystemBackground))
+                    .frame(height: 120)
+                HStack(spacing: 12) {
+                    Image(systemName: channel.imageName)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 48, height: 48)
+                        .foregroundColor(.accentColor)
+                        .padding(.leading, 12)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Live: \(channel.name)")
+                            .font(.headline)
+                        Text("Channel \(channel.number)")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+            }
         }
     }
 }

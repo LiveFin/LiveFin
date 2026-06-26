@@ -1,4 +1,8 @@
 {
+  "features" : [
+    "refractivity",
+    "specular-location"
+  ],
   "fill-specializations" : [
     {
       "value" : {
@@ -17,6 +21,48 @@
   ],
   "groups" : [
     {
+      "blend-mode" : "normal",
+      "blur-material" : 0.5,
+      "layers" : [
+        {
+          "fill" : "none",
+          "glass" : true,
+          "image-name" : "Pupils.png",
+          "name" : "Pupils",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -30.074069462403486,
+              -283.7109375
+            ]
+          }
+        }
+      ],
+      "lighting" : "individual",
+      "refractivity" : {
+        "depth" : 0.1442578125,
+        "enabled" : true,
+        "strength" : -0.5246875
+      },
+      "shadow" : {
+        "kind" : "none",
+        "opacity" : 0.6
+      },
+      "specular-specializations" : [
+        {
+          "value" : "inside"
+        },
+        {
+          "appearance" : "tinted",
+          "value" : "inside"
+        }
+      ],
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.2
+      }
+    },
+    {
       "blend-mode-specializations" : [
         {
           "appearance" : "dark",
@@ -30,8 +76,25 @@
       "blur-material" : null,
       "layers" : [
         {
+          "image-name" : "Eyes.png",
+          "name" : "Eyes",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -136.9490694624035,
+              -347.828125
+            ]
+          }
+        },
+        {
           "glass" : true,
           "hidden" : false,
+          "image-name" : "Fish.png",
+          "name" : "Fish"
+        },
+        {
+          "glass" : true,
+          "hidden" : true,
           "image-name" : "New Project.png",
           "name" : "New Project",
           "position" : {
@@ -41,8 +104,21 @@
               -29.828125
             ]
           }
+        },
+        {
+          "glass" : true,
+          "image-name" : "Eyes Back.png",
+          "name" : "Eyes Back",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -27.90625,
+              -347.828125
+            ]
+          }
         }
       ],
+      "lighting" : "individual",
       "position" : {
         "scale" : 1,
         "translation-in-points" : [
@@ -50,9 +126,14 @@
           64.1171875
         ]
       },
+      "refractivity" : {
+        "depth" : 0.5,
+        "enabled" : true,
+        "strength" : 0
+      },
       "shadow" : {
         "kind" : "neutral",
-        "opacity" : 0.7
+        "opacity" : 3.2
       },
       "specular" : true,
       "translucency" : {

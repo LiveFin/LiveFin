@@ -14,22 +14,56 @@
   ],
   "groups" : [
     {
-      "blend-mode" : "overlay",
+      "blend-mode-specializations" : [
+        {
+          "appearance" : "dark",
+          "value" : "normal"
+        },
+        {
+          "appearance" : "tinted",
+          "value" : "normal"
+        }
+      ],
+      "blur-material" : null,
+      "layers" : [
+        {
+          "glass" : true,
+          "hidden" : true,
+          "image-name" : "New Project.png",
+          "name" : "New Project",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -53.25,
+              -29.828125
+            ]
+          }
+        }
+      ],
+      "position" : {
+        "scale" : 1,
+        "translation-in-points" : [
+          20.875,
+          64.1171875
+        ]
+      },
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.7
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    },
+    {
+      "blend-mode" : "normal",
       "blur-material" : 0.5,
       "layers" : [
         {
-          "fill" : {
-            "solid" : "extended-gray:0.00000,1.00000"
-          },
-          "glass-specializations" : [
-            {
-              "value" : true
-            },
-            {
-              "appearance" : "tinted",
-              "value" : true
-            }
-          ],
+          "fill" : "none",
+          "glass" : true,
           "image-name" : "Pupils.png",
           "name" : "Pupils",
           "position" : {
@@ -42,11 +76,10 @@
         }
       ],
       "lighting" : "individual",
-      "name" : "Group",
       "refractivity" : {
-        "depth" : 0.117265625,
+        "depth" : 0.1442578125,
         "enabled" : true,
-        "strength" : -0.8748828125
+        "strength" : -0.5246875
       },
       "shadow" : {
         "kind" : "none",
@@ -138,50 +171,6 @@
       "shadow" : {
         "kind" : "neutral",
         "opacity" : 3.2
-      },
-      "specular" : true,
-      "translucency" : {
-        "enabled" : false,
-        "value" : 0.5
-      }
-    },
-    {
-      "blend-mode-specializations" : [
-        {
-          "appearance" : "dark",
-          "value" : "normal"
-        },
-        {
-          "appearance" : "tinted",
-          "value" : "normal"
-        }
-      ],
-      "blur-material" : null,
-      "layers" : [
-        {
-          "glass" : true,
-          "hidden" : true,
-          "image-name" : "New Project.png",
-          "name" : "New Project",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              -53.25,
-              -29.828125
-            ]
-          }
-        }
-      ],
-      "position" : {
-        "scale" : 1,
-        "translation-in-points" : [
-          20.875,
-          64.1171875
-        ]
-      },
-      "shadow" : {
-        "kind" : "neutral",
-        "opacity" : 0.7
       },
       "specular" : true,
       "translucency" : {

@@ -35,7 +35,8 @@ struct HorizontalProgramsRow: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: 8) {
-                ForEach(programs) { program in
+                // Using \.offset prevents SwiftUI from dropping duplicate items if there are ID collisions
+                ForEach(Array(programs.enumerated()), id: \.offset) { index, program in
                     NavigationLink(destination: ProgramView(program: program, appState: appState)
                         .environmentObject(appState)
                         .environmentObject(vm)) {
@@ -66,7 +67,8 @@ struct HorizontalChannelsRow: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .center, spacing: 10) {
-                ForEach(Array(channels.enumerated()), id: \.element.id) { index, channel in
+                // Using \.offset ensures all channels are shown even if elements share the same ID
+                ForEach(Array(channels.enumerated()), id: \.offset) { index, channel in
                     NavigationLink(destination: ChannelDetailView(channel: channel.asLiveDto(baseURL: appState.serverURL))) {
                         ZStack {
                             if #available(iOS 26.0, *) {
@@ -100,47 +102,64 @@ struct ProgramCard: View {
     @EnvironmentObject private var vm: HomeViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .bottomLeading) {
                 ProgramImage(program: program)
                     .frame(width: imageWidth, height: imageHeight)
                     .background(Color(UIColor.secondarySystemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                
                 if let progress = progressRatio, progress > 0, progress < 1 {
                     ZStack(alignment: .leading) {
-                        Rectangle().fill(Color.black.opacity(0.35)).frame(height: 4)
-                        Rectangle().fill(Color.white).frame(width: imageWidth * progress, height: 4)
+                        // Explicitly set width of background track to prevent it from shrinking
+                        Rectangle()
+                            .fill(Color.black.opacity(0.35))
+                            .frame(width: max(0, imageWidth - 12), height: 4)
+                        
+                        // Calculate width considering the 6pt padding on both sides (12 total)
+                        Rectangle()
+                            .fill(Color.white)
+                            .frame(width: max(0, (imageWidth - 12) * progress), height: 4)
                     }
                     .clipShape(Capsule())
                     .padding(6)
                 }
             }
-            Text(program.name)
-                .font(.headline)
-                .lineLimit(1)
-                .frame(maxWidth: imageWidth, alignment: .leading)
-            if let subtitle = programSubtitle {
-                Text(subtitle)
+            .frame(width: imageWidth, height: imageHeight)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous)) // Moved clipping to outer container
+            .shadow(color: Color.black.opacity(0.12), radius: 4, x: 0, y: 2)
+            
+            // Group text elements with tighter spacing
+            VStack(alignment: .leading, spacing: 2) {
+                Text(program.name)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: imageWidth, alignment: .leading)
+                
+                if let subtitle = programSubtitle {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: imageWidth, alignment: .leading)
+                }
+                if let timeLine = timeLine {
+                    Text(timeLine)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: imageWidth, alignment: .leading)
+                }
+                Text(channelLine)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                     .frame(maxWidth: imageWidth, alignment: .leading)
             }
-            if let timeLine = timeLine {
-                Text(timeLine)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: imageWidth, alignment: .leading)
-            }
-            Text(channelLine)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-                .frame(maxWidth: imageWidth, alignment: .leading)
         }
-        .fixedSize(horizontal: false, vertical: true) // Prevents SwiftUI from squishing the vertical height of the text
-        .padding(.bottom, 12) // Forces physical breathing room at the bottom of the card
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.bottom, 12)
     }
 
     private var imageWidth: CGFloat  { style == .portrait ? 120 : 220 }
@@ -207,7 +226,8 @@ struct HorizontalLibraryItemsRow: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: 8) {
-                ForEach(items) { item in
+                // Guaranteed rendering for every item in the array using \.offset
+                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                     if playDirectly {
                         Button {
                             // Instantly build stream context for direct playback bypass
@@ -251,11 +271,10 @@ struct LibraryItemCard: View {
     var body: some View {
         let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
         
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .bottomLeading) {
                 Color(UIColor.secondarySystemBackground)
                     .frame(width: imageWidth, height: imageHeight)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 
                 Group {
                     if style == .landscape {
@@ -311,40 +330,48 @@ struct LibraryItemCard: View {
                     }
                 }
                 .frame(width: imageWidth, height: imageHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 
                 if let progress = progressRatio, progress > 0, progress < 1 {
                     ZStack(alignment: .leading) {
-                        Rectangle().fill(Color.black.opacity(0.35)).frame(height: 4)
-                        Rectangle().fill(Color.blue).frame(width: imageWidth * progress, height: 4)
+                        // Explicit bounds to respect outer padding
+                        Rectangle()
+                            .fill(Color.black.opacity(0.35))
+                            .frame(width: max(0, imageWidth - 12), height: 4)
+                        Rectangle()
+                            .fill(Color.blue)
+                            .frame(width: max(0, (imageWidth - 12) * progress), height: 4)
                     }
                     .clipShape(Capsule())
                     .padding(6)
                 }
             }
             .frame(width: imageWidth, height: imageHeight)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .shadow(color: Color.black.opacity(0.12), radius: 4, x: 0, y: 2)
             
-            // Item details
-            Text(displayTitle)
-                .font(.headline)
-                .lineLimit(1)
-                .foregroundColor(.primary)
-                .frame(maxWidth: imageWidth, alignment: .leading)
-            
-            if let subtitle = itemSubtitle {
-                Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(displayTitle)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
                     .frame(maxWidth: imageWidth, alignment: .leading)
-            }
-            
-            if let secondaryInfo = secondaryInfoLine {
-                Text(secondaryInfo)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: imageWidth, alignment: .leading)
+                
+                if let subtitle = itemSubtitle {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: imageWidth, alignment: .leading)
+                }
+                
+                if let secondaryInfo = secondaryInfoLine {
+                    Text(secondaryInfo)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: imageWidth, alignment: .leading)
+                }
             }
         }
         .fixedSize(horizontal: false, vertical: true)

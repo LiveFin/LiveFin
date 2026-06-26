@@ -360,7 +360,7 @@ final class HomeViewModel: ObservableObject {
             var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)
             var q: [URLQueryItem] = [
                 URLQueryItem(name: "IsAiring", value: "true"),
-                URLQueryItem(name: "Limit", value: "120"),
+                URLQueryItem(name: "Limit", value: "500"),
                 URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber")
             ]
             if let uid = appState.user?.id { q.append(URLQueryItem(name: "userId", value: uid)) }
@@ -393,7 +393,6 @@ final class HomeViewModel: ObservableObject {
         do {
             guard let base = URL(string: appState.serverURL)?.appendingPathComponent("/LiveTv/Programs") else { return nil }
             let now = Date()
-            let start = now.addingTimeInterval(-6 * 3600)
             let end = now.addingTimeInterval(24 * 3600)
 
             func filterParam(into q: inout [URLQueryItem]) {
@@ -407,9 +406,9 @@ final class HomeViewModel: ObservableObject {
             }
 
             var q: [URLQueryItem] = [
-                URLQueryItem(name: "minStartDate", value: iso.string(from: start)),
+                URLQueryItem(name: "minEndDate",   value: iso.string(from: now)),
                 URLQueryItem(name: "maxStartDate", value: iso.string(from: end)),
-                URLQueryItem(name: "Limit",        value: "250"),
+                URLQueryItem(name: "Limit",        value: "500"),
                 URLQueryItem(name: "fields",       value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber")
             ]
             filterParam(into: &q)
@@ -428,9 +427,9 @@ final class HomeViewModel: ObservableObject {
 
             if items.isEmpty {
                 var qUtc: [URLQueryItem] = [
-                    URLQueryItem(name: "minStartDate", value: iso.string(from: start)),
+                    URLQueryItem(name: "minEndDate",   value: iso.string(from: now)),
                     URLQueryItem(name: "maxStartDate", value: iso.string(from: end)),
-                    URLQueryItem(name: "Limit",        value: "250"),
+                    URLQueryItem(name: "Limit",        value: "500"),
                     URLQueryItem(name: "fields",       value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber")
                 ]
                 filterParam(into: &qUtc)
@@ -449,7 +448,19 @@ final class HomeViewModel: ObservableObject {
                 }
             }
 
-            return items.sorted { a, b in
+            // Deduplicate by SeriesName or Name to ensure a wide variety of shows instead of a marathon taking up the row
+            var uniquePrograms: [JFProgram] = []
+            var seenTitles: Set<String> = []
+            
+            for item in items {
+                let title = item.seriesName ?? item.name
+                if !seenTitles.contains(title) {
+                    seenTitles.insert(title)
+                    uniquePrograms.append(item)
+                }
+            }
+
+            return uniquePrograms.sorted { a, b in
                 let la = a.startDate ?? Date.distantFuture
                 let lb = b.startDate ?? Date.distantFuture
                 if la == lb {
@@ -510,7 +521,7 @@ final class HomeViewModel: ObservableObject {
     private func fetchRecentlyAdded(appState: AppState) async -> [JFItemDto]? {
         guard !appState.serverURL.isEmpty, !appState.accessToken.isEmpty, !appState.userID.isEmpty else { return nil }
         let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
-        guard let url = URL(string: "\(base)/Users/\(appState.userID)/Items?sortBy=DateCreated&sortOrder=Descending&recursive=true&limit=12&includeItemTypes=Movie,Series&fields=Overview,ImageTags,BackdropImageTags,Genres,ProductionYear,OfficialRating,UserData,RunTimeTicks,SeriesName,SeriesId") else { return nil }
+        guard let url = URL(string: "\(base)/Users/\(appState.userID)/Items?sortBy=DateCreated&sortOrder=Descending&recursive=true&limit=25&includeItemTypes=Movie,Series&fields=Overview,ImageTags,BackdropImageTags,Genres,ProductionYear,OfficialRating,UserData,RunTimeTicks,SeriesName,SeriesId") else { return nil }
         
         var request = URLRequest(url: url)
         request.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")

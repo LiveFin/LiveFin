@@ -76,7 +76,6 @@ final class AppState: ObservableObject {
     // MARK: - Demo Mode Activation
     @MainActor
     private func activateDemoMode() {
-        // Clear all normal user state
         self.isDemoMode = true
         self.isLoggedIn = true
         self.user = UserDto(id: "demo", name: "App Store Reviewer")
@@ -87,13 +86,11 @@ final class AppState: ObservableObject {
         self.serverURL = ""
         self.apiKey = ""
         self.loginError = nil
-        // Do NOT touch Keychain for demo mode
     }
 
     // MARK: - Normal User Activation
     @MainActor
     private func activateNormalUser(userId: String, userName: String, accessToken: String, client: JellyfinClient, serverURL: String) {
-        // Clear all demo state
         self.isDemoMode = false
         self.isLoggedIn = true
         self.user = UserDto(id: userId, name: userName)
@@ -105,7 +102,6 @@ final class AppState: ObservableObject {
         let newApiKey = UUID().uuidString
         self.apiKey = newApiKey
         self.loginError = nil
-        // Save to Keychain for normal users only
         KeychainHelper.save(key: "apiKey", value: newApiKey)
         KeychainHelper.save(key: "userId", value: userId)
         KeychainHelper.saveCredentials(server: serverURL, username: userName, accessToken: accessToken)
@@ -113,7 +109,6 @@ final class AppState: ObservableObject {
         WatchSyncManager.shared.sendLogin(serverURL: serverURL, accessToken: accessToken, apiKey: self.apiKey, userId: userId)
 #endif
         Task { await self.refreshUserProfileInfoAndImage() }
-        // Report capabilities (includes IconUrl) so the server shows our logo
         self.reportFullClientCapabilities()
     }
 
@@ -141,7 +136,6 @@ final class AppState: ObservableObject {
         await MainActor.run { self.resetState() }
         if username == "appledemo" && password == "review" {
             activateDemoMode()
-            print("Demo Mode activated for App Store review.")
             return
         }
         do {
@@ -159,8 +153,6 @@ final class AppState: ObservableObject {
             let requestData = try JSONSerialization.data(withJSONObject: requestBody)
             let cleanBaseURL = server.absoluteString.hasSuffix("/") ? String(server.absoluteString.dropLast()) : server.absoluteString
             let url = URL(string: cleanBaseURL + "/Users/AuthenticateByName")!
-            print("[DEBUG] Login URL: \(url)")
-            print("[DEBUG] Request body: \(String(data: requestData, encoding: .utf8) ?? "<nil>")")
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.httpBody = requestData
@@ -169,14 +161,12 @@ final class AppState: ObservableObject {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             let (data, response) = try await URLSession.shared.data(for: request)
             if let httpResponse = response as? HTTPURLResponse {
-                print("[DEBUG] Response status code: \(httpResponse.statusCode)")
                 if httpResponse.statusCode != 200 {
                     if let responseString = String(data: data, encoding: .utf8), !responseString.isEmpty {
                         self.loginError = responseString
                     } else {
                         self.loginError = "Login failed: Server returned status code \(httpResponse.statusCode)"
                     }
-                    print("Login failed: Server error: \(self.loginError ?? "Unknown error")")
                     await MainActor.run { self.resetState() }
                     return
                 }
@@ -189,25 +179,11 @@ final class AppState: ObservableObject {
                     let Name: String
                 }
             }
-            do {
-                let authResponse = try JSONDecoder().decode(LoginResponse.self, from: data)
-                // Recreate client with access token so SDK calls are authenticated
-                let clientWithToken = JellyfinClient(configuration: config, accessToken: authResponse.AccessToken)
-                activateNormalUser(userId: authResponse.User.Id, userName: authResponse.User.Name, accessToken: authResponse.AccessToken, client: clientWithToken, serverURL: server.absoluteString)
-                print("Debug: Access token set to: \(self.accessToken)")
-                print("Debug: Client initialized: \(self.client != nil)")
-                await fetchServerName()
-                Task { await self.refreshUserProfileInfoAndImage() }
-            } catch {
-                if let responseString = String(data: data, encoding: .utf8) {
-                    print("Login failed: Could not decode response. Response body: \(responseString)")
-                }
-                print("Login failed: \(error.localizedDescription)")
-                self.loginError = "Invalid username or password."
-                await MainActor.run { self.resetState() }
-            }
+            let authResponse = try JSONDecoder().decode(LoginResponse.self, from: data)
+            let clientWithToken = JellyfinClient(configuration: config, accessToken: authResponse.AccessToken)
+            activateNormalUser(userId: authResponse.User.Id, userName: authResponse.User.Name, accessToken: authResponse.AccessToken, client: clientWithToken, serverURL: server.absoluteString)
+            await fetchServerName()
         } catch {
-            print("Login failed: \(error.localizedDescription)")
             self.loginError = "Invalid username or password."
             await MainActor.run { self.resetState() }
         }
@@ -218,20 +194,15 @@ final class AppState: ObservableObject {
         let creds = KeychainHelper.retrieveCredentials()
         guard let server = creds.serverURL,
               let username = creds.username,
-              let token = creds.accessToken else {
-            return
-        }
-        // Reuse the persistent deviceId (must match the one used during login that issued the token)
-        let stableDeviceId = deviceId // already loaded from Keychain on init
+              let token = creds.accessToken else { return }
+        
         let config = JellyfinClient.Configuration(
             url: URL(string: server)!,
             client: "LiveFin",
             deviceName: clientDevice,
-            deviceID: stableDeviceId,
+            deviceID: deviceId,
             version: clientVersion
         )
-        print("[RESTORE] Using deviceId=\(stableDeviceId) for restored session")
-        // Initialize client with existing access token so SDK calls are authorized
         self.client = JellyfinClient(configuration: config, accessToken: token)
         self.serverURL = server
         self.accessToken = token
@@ -269,7 +240,6 @@ final class AppState: ObservableObject {
          }
      }
 
-
     @MainActor
     func logout() {
         resetState()
@@ -280,10 +250,7 @@ final class AppState: ObservableObject {
 
     @MainActor
     func reportPlaybackStart(itemId: String, canSeek: Bool = true, playMethod: String = "DirectPlay", repeatMode: String = "RepeatNone") {
-        guard let url = buildURL("/Sessions/Playing"), !accessToken.isEmpty else {
-            print("AppState: Missing server URL or access token")
-            return
-        }
+        guard let url = buildURL("/Sessions/Playing"), !accessToken.isEmpty else { return }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -314,10 +281,7 @@ final class AppState: ObservableObject {
 
     @MainActor
     func reportPlaybackProgress(itemId: String, positionTicks: Int64, canSeek: Bool = true, isPaused: Bool = false, playMethod: String = "DirectPlay", repeatMode: String = "RepeatNone") {
-        guard let url = buildURL("/Sessions/Playing/Progress"), !accessToken.isEmpty else {
-            print("AppState: Missing server URL or access token")
-            return
-        }
+        guard let url = buildURL("/Sessions/Playing/Progress"), !accessToken.isEmpty else { return }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -345,30 +309,33 @@ final class AppState: ObservableObject {
     }
 
     @MainActor
-    func reportPlaybackStopped(itemId: String, positionTicks: Int64, playMethod: String = "DirectPlay") {
-        guard let url = buildURL("/Sessions/Playing/Stopped"), !accessToken.isEmpty else {
-            print("AppState: Missing server URL or access token")
-            return
-        }
+    func reportPlaybackStopped(itemId: String, positionTicks: Int64, playSessionId: String? = nil, playMethod: String = "DirectPlay") {
+        guard let url = buildURL("/Sessions/Playing/Stopped"), !accessToken.isEmpty else { return }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token")
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "ItemId": itemId,
             "PositionTicks": positionTicks,
             "PlayMethod": playMethod
         ]
 
+        if let sessionId = playSessionId, !sessionId.isEmpty {
+            body["PlaySessionId"] = sessionId
+        }
+
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        URLSession.shared.dataTask(with: request) { [weak self] _, _, error in
+        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
             if let error = error {
                 print("Jellyfin: Error reporting playback stopped: \(error)")
             } else {
-                print("Jellyfin: Reported playback stopped for \(itemId) at \(positionTicks) ticks")
+                if let httpResponse = response as? HTTPURLResponse {
+                    print("Jellyfin: Reported playback stopped for \(itemId) (Status: \(httpResponse.statusCode))")
+                }
                 DispatchQueue.main.async {
                     if self?.currentPlaybackItemId == itemId {
                         self?.currentPlaybackItemId = nil
@@ -379,15 +346,29 @@ final class AppState: ObservableObject {
         }.resume()
     }
 
-    // MARK: - Simple EPG polling
+    @MainActor
+    func closeLiveStream(liveStreamId: String) {
+        // Fix for the 400 error: LiveStreams/Close requires the liveStreamId in the URL query string!
+        guard let url = buildURL("/LiveStreams/Close?liveStreamId=\(liveStreamId)"), !accessToken.isEmpty else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token")
+        
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            if let error = error {
+                print("Jellyfin: Error closing live stream tuner connection: \(error)")
+            } else if let http = response as? HTTPURLResponse {
+                print("Jellyfin: Closed active live stream tuner \(liveStreamId) (Status: \(http.statusCode))")
+            }
+        }.resume()
+    }
+
     @MainActor
     func startEPGPolling(for channelId: String, intervalSeconds: TimeInterval = 30) {
         stopEPGPolling()
 
-        // Immediately fetch once
         Task { await fetchCurrentProgram(channelId: channelId) }
 
-        // Schedule recurring timer on main run loop
         epgTimer = Timer.scheduledTimer(withTimeInterval: intervalSeconds, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             Task { await self.fetchCurrentProgram(channelId: channelId) }

@@ -56,7 +56,7 @@ struct ToolbarView: View {
 
     // Physically resize the UIImage so the native Menu renderer doesn't use the original massive asset size
     private var resizedDiscordIcon: Image {
-        let side: CGFloat = isRunningOnMac ? 14 : 18
+        let side: CGFloat = isRunningOnMac ? 50 : 50
         let targetSize = CGSize(width: side, height: side)
         
         guard let uiImage = UIImage(named: "Discord Logo") else {

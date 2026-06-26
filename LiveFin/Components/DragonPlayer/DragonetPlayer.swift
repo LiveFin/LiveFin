@@ -14,6 +14,7 @@ import AVKit
 struct DragonetAirPlayButton: UIViewRepresentable {
     func makeUIView(context: Context) -> AVRoutePickerView {
         let v = AVRoutePickerView()
+        v.tintColor = .white
         v.activeTintColor = .systemBlue
         v.prioritizesVideoDevices = true
         return v
@@ -50,20 +51,12 @@ struct DragonetPlayer: UIViewControllerRepresentable {
         vc.player = player
         vc.showsPlaybackControls = false
         
-        // 💥 FIX FOR INTERNAL LAYOUT SHIFTS 💥
-        // Prevents the internal video layer from trying to inset itself away from notches
         vc.view.insetsLayoutMarginsFromSafeArea = false
-        
-        // 徴 FIX FOR BACKGROUND PAUSING 徴
-        // By default, AVPlayerViewController tries to run its own PiP and NowPlaying logic.
-        // When we hide the controls, it conflicts with our manual logic and pauses the app.
-        // We disable Apple's built-in managers so our manual PiP Controller runs flawlessly.
+
         vc.allowsPictureInPicturePlayback = false
         
-        // 💥 FIX FOR AIRPLAY STUCK LOADING 💥
-        // Setting this to true allows AVPlayerViewController to share stream and route configurations
-        // with external hardware targets.
-        vc.updatesNowPlayingInfoCenter = true
+        // Disable AVKit from hijacking the Now Playing Info Center with HLS stream metadata
+        vc.updatesNowPlayingInfoCenter = false
         
         vc.videoGravity = .resizeAspect
         
@@ -121,9 +114,6 @@ struct DragonetPlayer: UIViewControllerRepresentable {
             }
             pip.delegate = self
             
-            // 徴 FIX FOR PIP NOT STARTING ON HOME SWIPE 徴
-            // This was previously set to `false`. Setting it to `true` allows
-            // the manual PiP Controller to gracefully trigger when you minimize the app!
             if #available(iOS 14.2, *) {
                 pip.canStartPictureInPictureAutomaticallyFromInline = true
             }

@@ -46,8 +46,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
     
     private var timeObserver: Any?
     private var itemStatusObserver: NSKeyValueObservation?
-    private var bufferingObserver: NSKeyValueObservation?
-    private var keepUpObserver: NSKeyValueObservation?
+    private var playbackStateObserver: NSKeyValueObservation?
     private var cancellables = Set<AnyCancellable>()
     
     private var hasResumedCurrentItem = false
@@ -75,6 +74,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
             object: nil
         )
         
+        setupPlaybackStateObserver()
         loadItem(at: currentIndex)
         setupRemoteCommands()
     }
@@ -85,8 +85,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
             timeObserver = nil
         }
         itemStatusObserver?.invalidate()
-        bufferingObserver?.invalidate()
-        keepUpObserver?.invalidate()
+        playbackStateObserver?.invalidate()
         NotificationCenter.default.removeObserver(self)
         
         let center = MPRemoteCommandCenter.shared()
@@ -204,7 +203,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
                     self.observeItem(playerItem)
                     self.player.replaceCurrentItem(with: playerItem)
                     self.player.play()
-                    self.isPlaying = true
                     
                     self.updateNowPlayingInfo()
                     self.appState.reportPlaybackStart(itemId: item.Id, canSeek: true)
@@ -224,24 +222,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
             timeObserver = nil
         }
         itemStatusObserver?.invalidate()
-        bufferingObserver?.invalidate()
-        keepUpObserver?.invalidate()
-        
-        bufferingObserver = item.observe(\.isPlaybackBufferEmpty, options: [.new]) { [weak self] observedItem, _ in
-            DispatchQueue.main.async { self?.isBuffering = observedItem.isPlaybackBufferEmpty }
-        }
-        
-        keepUpObserver = item.observe(\.isPlaybackLikelyToKeepUp, options: [.new]) { [weak self] observedItem, _ in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                if observedItem.isPlaybackLikelyToKeepUp {
-                    self.isBuffering = false
-                    if self.isPlaying {
-                        self.player.play()
-                    }
-                }
-            }
-        }
         
         itemStatusObserver = item.observe(\.status, options: [.new]) { [weak self] observedItem, _ in
             DispatchQueue.main.async {
@@ -249,7 +229,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
                 
                 if observedItem.status == .readyToPlay {
                     self.duration = observedItem.duration.seconds.isNaN ? 0 : observedItem.duration.seconds
-                    self.isBuffering = false
                     
                     self.populateMediaSelectionTracks(for: observedItem)
                     self.updateNowPlayingPlaybackState()
@@ -285,13 +264,34 @@ final class PlanktonPlayerViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Core Playback State Observer
+    
+    private func setupPlaybackStateObserver() {
+        playbackStateObserver = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] player, _ in
+            guard let self = self else { return }
+            let status = player.timeControlStatus
+            
+            DispatchQueue.main.async {
+                self.isBuffering = (status == .waitingToPlayAtSpecifiedRate)
+                if status == .playing { self.isPlaying = true }
+                if status == .paused { self.isPlaying = false }
+                
+                self.updateNowPlayingPlaybackState()
+            }
+        }
+    }
+    
     @objc private func playerItemDidFinishPlaying(notification: NSNotification) {
         guard let finishedItem = notification.object as? AVPlayerItem,
               finishedItem == player.currentItem,
               let currentItem = currentItem else { return }
         
         let totalTicks = Int64(duration * 10_000_000)
-        appState.reportPlaybackStopped(itemId: currentItem.Id, positionTicks: totalTicks)
+        
+        // BIND PLAY SESSION ID: Releases active VOD transcoding jobs immediately when finished
+        let playSessionId = streamURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
+            .queryItems?.first(where: { $0.name.caseInsensitiveCompare("PlaySessionId") == .orderedSame })?.value
+        appState.reportPlaybackStopped(itemId: currentItem.Id, positionTicks: totalTicks, playSessionId: playSessionId)
         
         if currentIndex + 1 < playlist.count {
             currentIndex += 1
@@ -303,19 +303,16 @@ final class PlanktonPlayerViewModel: ObservableObject {
     }
     
     func togglePlayPause() {
-        if isPlaying {
-            player.pause()
-            isPlaying = false
-        } else {
+        if player.timeControlStatus == .paused {
             player.play()
-            isPlaying = true
+        } else {
+            player.pause()
         }
-        
-        updateNowPlayingPlaybackState()
         
         if let id = currentItem?.Id {
             let ticks = Int64(currentTime * 10_000_000)
-            appState.reportPlaybackProgress(itemId: id, positionTicks: ticks, canSeek: true, isPaused: !isPlaying)
+            let isPausedNow = (player.timeControlStatus == .paused)
+            appState.reportPlaybackProgress(itemId: id, positionTicks: ticks, canSeek: true, isPaused: isPausedNow)
         }
     }
     
@@ -345,7 +342,12 @@ final class PlanktonPlayerViewModel: ObservableObject {
     
     func stopAndDismiss() {
         if let id = currentItem?.Id {
-            appState.reportPlaybackStopped(itemId: id, positionTicks: Int64(currentTime * 10_000_000))
+            let ticks = Int64(currentTime * 10_000_000)
+            
+            // BIND PLAY SESSION ID: Releases active VOD transcoding jobs immediately when exiting
+            let playSessionId = streamURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
+                .queryItems?.first(where: { $0.name.caseInsensitiveCompare("PlaySessionId") == .orderedSame })?.value
+            appState.reportPlaybackStopped(itemId: id, positionTicks: ticks, playSessionId: playSessionId)
         }
         cleanup()
         onFinishedPlaylist?()
@@ -452,7 +454,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
         let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
         
         if isEpisode {
-            guard let url = URL(string: "\(base)/Users/\(appState.userID)/Items/\(item.Id)?Fields=SeriesThumbImageTag,SeriesPrimaryImageTag") else { return }
+            guard let url = URL(string: "\(base)/Users/\(appState.userID)/Items/\(item.Id)") else { return }
             var req = URLRequest(url: url)
             req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
             
@@ -464,10 +466,40 @@ final class PlanktonPlayerViewModel: ObservableObject {
                     return
                 }
                 
-                if let seriesId = json["SeriesId"] as? String, let seriesThumb = json["SeriesThumbImageTag"] as? String {
-                    self.fetchAndSetNowPlayingArtwork(itemId: seriesId, imageType: "Thumb", tag: seriesThumb, base: base)
-                } else if let seriesId = json["SeriesId"] as? String, let seriesPrimary = json["SeriesPrimaryImageTag"] as? String {
-                    self.fetchAndSetNowPlayingArtwork(itemId: seriesId, imageType: "Primary", tag: seriesPrimary, base: base)
+                let seriesId = json["SeriesId"] as? String
+                let parentThumbId = json["ParentThumbItemId"] as? String
+                let thumbId = seriesId ?? parentThumbId
+                let thumbTag = (json["ParentThumbImageTag"] as? String) ?? (json["SeriesThumbImageTag"] as? String)
+                
+                if let tId = thumbId, let tTag = thumbTag {
+                    self.fetchAndSetNowPlayingArtwork(itemId: tId, imageType: "Thumb", tag: tTag, base: base)
+                } else if let sId = seriesId {
+                    // Fallback to querying the Series item explicitly since Jellyfin often omits Series image tags on episodes
+                    guard let seriesUrl = URL(string: "\(base)/Users/\(self.appState.userID)/Items/\(sId)") else {
+                        self.setFallbackArtwork(item: item, base: base)
+                        return
+                    }
+                    var sReq = URLRequest(url: seriesUrl)
+                    sReq.setValue(self.appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+                    
+                    URLSession.shared.dataTask(with: sReq) { sData, _, _ in
+                        guard let sData = sData,
+                              let sJson = try? JSONSerialization.jsonObject(with: sData) as? [String: Any],
+                              let imageTags = sJson["ImageTags"] as? [String: String] else {
+                            self.setFallbackArtwork(item: item, base: base)
+                            return
+                        }
+                        
+                        if let sThumb = imageTags["Thumb"] {
+                            self.fetchAndSetNowPlayingArtwork(itemId: sId, imageType: "Thumb", tag: sThumb, base: base)
+                        } else if let sBackdrop = (sJson["BackdropImageTags"] as? [String])?.first {
+                            self.fetchAndSetNowPlayingArtwork(itemId: sId, imageType: "Backdrop/0", tag: sBackdrop, base: base)
+                        } else if let sPrimary = imageTags["Primary"] {
+                            self.fetchAndSetNowPlayingArtwork(itemId: sId, imageType: "Primary", tag: sPrimary, base: base)
+                        } else {
+                            self.setFallbackArtwork(item: item, base: base)
+                        }
+                    }.resume()
                 } else {
                     self.setFallbackArtwork(item: item, base: base)
                 }
@@ -488,12 +520,13 @@ final class PlanktonPlayerViewModel: ObservableObject {
     }
     
     private func setFallbackArtwork(item: JFItemDto, base: String) {
+        // Enforce fallback preference for landscape imagery before defaulting to Primary
         if let thumb = item.ImageTags?["Thumb"] {
             fetchAndSetNowPlayingArtwork(itemId: item.Id, imageType: "Thumb", tag: thumb, base: base)
-        } else if let primaryTag = item.primaryImageTag {
-            fetchAndSetNowPlayingArtwork(itemId: item.Id, imageType: "Primary", tag: primaryTag, base: base)
         } else if let backdrop = item.backdropImageTag {
             fetchAndSetNowPlayingArtwork(itemId: item.Id, imageType: "Backdrop/0", tag: backdrop, base: base)
+        } else if let primaryTag = item.primaryImageTag {
+            fetchAndSetNowPlayingArtwork(itemId: item.Id, imageType: "Primary", tag: primaryTag, base: base)
         }
     }
     
@@ -563,8 +596,7 @@ struct PlanktonPlayerView: View {
                     controlsVisible: $vm.controlsVisible,
                     onPlaybackError: { _ in }
                 ) { vc in
-                    // 💥 THE FIX: Prevents AVPlayerViewController from automatically
-                    // overwriting our robust local NowPlaying dictionary with empty MP4 header tags
+                    // Prevents AVPlayerViewController from automatically overwriting our robust local NowPlaying dictionary with empty MP4 header tags
                     vc.updatesNowPlayingInfoCenter = false
                     
                     vc.onTap = {

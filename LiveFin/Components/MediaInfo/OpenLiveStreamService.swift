@@ -10,6 +10,13 @@ import UIKit
 import JellyfinAPI
 
 struct JFOpenLiveStreamService {
+    
+    struct ResolvedStream {
+        let url: String?
+        let playSessionId: String?
+        let serverStatus: String?
+    }
+
     static func resolveStreamURL(
         channelId: String,
         userId: String,
@@ -46,64 +53,20 @@ struct JFOpenLiveStreamService {
         )
     }
 
-    private static func postOpen(
-        base: String,
-        path: String,
-        channelId: String,
-        userId: String,
-        accessToken: String,
-        deviceId: String,
-        deviceName: String,
-        clientVersion: String
-    ) async throws -> String {
-        return try await withCheckedThrowingContinuation { continuation in
-            Task {
-                let url = URL(string: base + path)!
-                var request = URLRequest(url: url)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.setValue("application/json", forHTTPHeaderField: "Accept")
-                request.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token")
-                let authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"\(clientVersion)\""
-                request.setValue(authHeader, forHTTPHeaderField: "X-Emby-Authorization")
-                request.setValue(userId, forHTTPHeaderField: "X-Emby-User-Id")
-                request.setValue("LiveFin", forHTTPHeaderField: "X-Emby-Client")
-                request.setValue(deviceName, forHTTPHeaderField: "X-Emby-Device-Name")
-                request.setValue(deviceId, forHTTPHeaderField: "X-Emby-Device-Id")
-                request.setValue(clientVersion, forHTTPHeaderField: "X-Emby-Client-Version")
-                let userAgent = "LiveFin/\(clientVersion) (iOS; \(deviceName))"
-                request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-                
-                // FIX 3: Removed strict AVC/H264 constraints from postOpen.
-                let body: [String: Any] = [
-                    "ChannelId": channelId,
-                    "UserId": userId,
-                    "AllowAudioStreamCopy": true,
-                    "AllowVideoStreamCopy": true,
-                    "MaxStreamingBitrate": 60_000_000,
-                    "RequireAvc": false,
-                    "AudioCodec": "aac,ac3,eac3",
-                    "VideoCodec": "hevc,h265,h264"
-                ]
-                request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-                URLSession.shared.dataTask(with: request) { data, response, _ in
-                    guard let http = response as? HTTPURLResponse, let data = data, (200...299).contains(http.statusCode) else {
-                        continuation.resume(throwing: URLError(.badServerResponse)); return
-                    }
-                    if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        if let id = obj["Id"] as? String, !id.isEmpty { continuation.resume(returning: id); return }
-                        if let id = obj["id"] as? String, !id.isEmpty { continuation.resume(returning: id); return }
-                    }
-                    struct Resp: Decodable { let Id: String? }
-                    if let resp = try? JSONDecoder().decode(Resp.self, from: data), let id = resp.Id, !id.isEmpty {
-                        continuation.resume(returning: id); return
-                    }
-                    continuation.resume(throwing: URLError(.cannotParseResponse))
-                }.resume()
-            }
-        }
+    // MARK: - Live TV Specific Safeguards
+    
+    /// iOS absolutely cannot direct-play raw .ts streams from tuners. We must intercept these.
+    private static func needsTranscodingForDirectPath(_ path: String?) -> Bool {
+        guard let p = path?.lowercased() else { return false }
+        if p.hasSuffix(".ts") || p.hasSuffix("/stream.ts") { return true }
+        if p.contains("/livetv/") || p.contains("livestreamfiles") { return true }
+        return false
     }
 
+    // MARK: - Pre-Open Live Stream (Buffer Warmup)
+    
+    /// Call /LiveStreams/Open before PlaybackInfo so the server begins capturing the
+    /// tuner feed while we wait for PlaybackInfo. This prevents 404s on tuner startup.
     private static func openLiveStream(
         base: String,
         channelId: String,
@@ -120,6 +83,7 @@ struct JFOpenLiveStreamService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token")
+        
         let authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"\(clientVersion)\""
         request.setValue(authHeader, forHTTPHeaderField: "X-Emby-Authorization")
         request.setValue(userId, forHTTPHeaderField: "X-Emby-User-Id")
@@ -149,6 +113,8 @@ struct JFOpenLiveStreamService {
         return nil
     }
 
+    // MARK: - URL Helpers
+    
     private static func trimTrailingSlash(_ s: String) -> String {
         s.hasSuffix("/") ? String(s.dropLast()) : s
     }
@@ -158,19 +124,20 @@ struct JFOpenLiveStreamService {
         guard let host = abs.host?.lowercased(), host == "localhost" || host == "127.0.0.1" else { return urlString }
         var comps = URLComponents(url: abs, resolvingAgainstBaseURL: false)
         let baseComps = URLComponents(url: base, resolvingAgainstBaseURL: false)
+        
         comps?.host = baseComps?.host
-        let pathPort = comps?.port
-        let serverPort = baseComps?.port
-        comps?.port = pathPort ?? serverPort
-        if pathPort != nil {
-            if comps?.scheme == nil { comps?.scheme = baseComps?.scheme }
-        } else {
+        
+        if comps?.port == nil {
+            comps?.port = baseComps?.port
+        }
+        if comps?.scheme == nil {
             comps?.scheme = baseComps?.scheme
         }
+        
         return comps?.url?.absoluteString ?? urlString
     }
 
-    private static func buildAbsoluteURL(base: String, pathOrUrl: String, altBase: String? = nil) -> String? {
+    private static func buildAbsoluteURL(base: String, pathOrUrl: String) -> String? {
         var value = pathOrUrl
         if value.contains("localhost") || value.contains("127.0.0.1") {
             if let host = URL(string: base)?.host {
@@ -197,30 +164,14 @@ struct JFOpenLiveStreamService {
             }
             return comps?.url?.absoluteString ?? value
         }
-        let chosenBase = base
-        if value.hasPrefix("/") {
-            return chosenBase + value
-        } else {
-            return chosenBase + "/" + value
-        }
-    }
-
-    private static func needsTranscodingForDirectPath(_ path: String?) -> Bool {
-        guard let p = path?.lowercased() else { return false }
-        if p.hasSuffix(".ts") || p.hasSuffix("/stream.ts") { return true }
-        if p.contains("/livetv/livestreamfiles/") && (p.hasSuffix("/stream.ts") || p.hasSuffix(".ts")) {
-            return true
-        }
-        return false
+        return value.hasPrefix("/") ? (base + value) : (base + "/" + value)
     }
 
     private static func sanitizeUrlString(_ s: String) -> String {
         let forbidden: [UInt32] = [0x2028, 0x2029, 0xFEFF]
         return String(s.filter { ch in
             for scalar in ch.unicodeScalars {
-                if scalar.value < 0x20 || scalar.value == 0x7F || forbidden.contains(UInt32(scalar.value)) {
-                    return false
-                }
+                if scalar.value < 0x20 || scalar.value == 0x7F || forbidden.contains(UInt32(scalar.value)) { return false }
             }
             return true
         })
@@ -237,12 +188,8 @@ struct JFOpenLiveStreamService {
         return sanitizeUrlString(comps.url?.absoluteString ?? urlString)
     }
 
-    struct ResolvedStream {
-        let url: String?
-        let playSessionId: String?
-        let serverStatus: String?
-    }
-
+    // MARK: - Main Resolution Logic
+    
     static func resolveStreamURLWithSession(
         channelId: String,
         userId: String,
@@ -254,120 +201,76 @@ struct JFOpenLiveStreamService {
         debug: Bool = false
     ) async -> ResolvedStream {
         let base = trimTrailingSlash(serverURL)
-        let resolvedDeviceName = deviceName ?? UIDevice.current.name
+        
+        let resolvedDeviceName: String
+        if let name = deviceName {
+            resolvedDeviceName = name
+        } else {
+            resolvedDeviceName = await MainActor.run { UIDevice.current.name }
+        }
 
         do {
+            // Concurrently open tuner and fetch PlaybackInfo
             async let liveStreamIdTask = openLiveStream(
-                base: base,
-                channelId: channelId,
-                userId: userId,
-                accessToken: accessToken,
-                deviceId: deviceId,
-                deviceName: resolvedDeviceName,
-                clientVersion: clientVersion,
-                debug: debug
+                base: base, channelId: channelId, userId: userId, accessToken: accessToken,
+                deviceId: deviceId, deviceName: resolvedDeviceName, clientVersion: clientVersion, debug: debug
             )
 
             async let playbackInfoTask = JFPlaybackInfoService.fetchPlaybackInfoWithTranscodingUrl(
-                itemId: channelId,
-                userId: userId,
-                serverURL: base,
-                accessToken: accessToken,
-                deviceId: deviceId,
-                deviceName: resolvedDeviceName,
-                clientVersion: clientVersion,
-                debug: debug
+                itemId: channelId, userId: userId, serverURL: base, accessToken: accessToken,
+                deviceId: deviceId, deviceName: resolvedDeviceName, clientVersion: clientVersion, debug: debug,
+                isLiveTV: true // EXPLICITLY TELL PLAYBACK INFO THIS IS LIVE TV
             )
 
             let (liveStreamId, playbackResult) = await (liveStreamIdTask, try playbackInfoTask)
-            if debug, let sid = liveStreamId { print("[ResolveStream] LiveStreamId pre-opened: \(sid)") }
+            if debug, let sid = liveStreamId { print("[ResolveStream] Pre-opened LiveStreamId: \(sid)") }
 
             let (playbackInitial, transcodingUrlInitial, mediaSourceIdInitial, _) = playbackResult
 
             let primary = playbackInitial.mediaSources?.first
             let directPath = primary?.path
-            let supportsDirectPlay = primary?.isSupportsDirectPlay
             let playSessionId = playbackInitial.playSessionID
+            var supportsDirectPlay = primary?.isSupportsDirectPlay ?? false
+
+            // OVERRIDE: If the server thinks it can direct play a raw TS tuner file, reject it.
+            // AVPlayer will throw CoreMediaErrorDomain if fed a raw TS URL.
+            if supportsDirectPlay {
+                if needsTranscodingForDirectPath(directPath) || primary?.container?.lowercased() == "ts" {
+                    if debug { print("[ResolveStream] Blocked raw TS direct play to prevent AVPlayer crash.") }
+                    supportsDirectPlay = false
+                }
+            }
 
             func makeResolved(url: String?, status: String?) -> ResolvedStream {
                 ResolvedStream(url: url, playSessionId: playSessionId, serverStatus: status)
             }
 
-            if let supports = supportsDirectPlay {
-                if supports {
-                    if let p = directPath {
-                        let adjusted = replaceLocalhostWithServerHostAndPort(in: p, serverBase: base)
-                        let authed = ensureApiKeyParam(in: adjusted, token: accessToken)
-                        if debug { print("[ResolveStream] SupportsDirectPlay -> direct path -> \(authed)") }
-                        return makeResolved(url: authed, status: "DirectPlay")
-                    }
-                    if let turl = transcodingUrlInitial, let final = buildAbsoluteURL(base: base, pathOrUrl: turl) {
-                        let authed = ensureApiKeyParam(in: final, token: accessToken)
-                        if debug { print("[ResolveStream] DirectPlay but no direct path; using TranscodingUrl -> \(authed)") }
-                        Task.detached {
-                            _ = await pollAndDetermineSessionStatus(base: base, playSessionId: playSessionId, accessToken: accessToken, debug: debug)
-                        }
-                        return makeResolved(url: authed, status: nil)
-                    }
-                    return makeResolved(url: nil, status: "Unknown")
-                } else {
-                    if let turl = transcodingUrlInitial, let final = buildAbsoluteURL(base: base, pathOrUrl: turl) {
-                        let authed = ensureApiKeyParam(in: final, token: accessToken)
-                        if debug { print("[ResolveStream] SupportsDirectPlay == false -> TranscodingUrl -> \(authed)") }
-                        Task.detached {
-                            _ = await pollAndDetermineSessionStatus(base: base, playSessionId: playSessionId, accessToken: accessToken, debug: debug)
-                        }
-                        return makeResolved(url: authed, status: nil)
-                    }
-                    if debug { print("[ResolveStream] No TranscodingUrl; retrying with forced HLS params") }
-                    if let turl = await requestForcedTranscodingUrl(
-                        itemId: channelId, userId: userId, serverURL: base,
-                        accessToken: accessToken, deviceId: deviceId,
-                        deviceName: deviceName, clientVersion: clientVersion,
-                        mediaSourceId: mediaSourceIdInitial, debug: debug
-                    ), let final = buildAbsoluteURL(base: base, pathOrUrl: turl) {
-                        let authed = ensureApiKeyParam(in: final, token: accessToken)
-                        if debug { print("[ResolveStream] Forced TranscodingUrl -> \(authed)") }
-                        Task.detached {
-                            _ = await pollAndDetermineSessionStatus(base: base, playSessionId: playSessionId, accessToken: accessToken, debug: debug)
-                        }
-                        return makeResolved(url: authed, status: nil)
-                    }
-                    if debug { print("[ResolveStream] No TranscodingUrl available; giving up") }
-                    return makeResolved(url: nil, status: "Unknown")
-                }
-            } else {
-                let container = primary?.container?.lowercased()
-                let isTS = (container == "ts") || needsTranscodingForDirectPath(directPath)
-
-                if isTS {
-                    if let turl = transcodingUrlInitial, let final = buildAbsoluteURL(base: base, pathOrUrl: turl) {
-                        let authed = ensureApiKeyParam(in: final, token: accessToken)
-                        Task.detached {
-                            _ = await pollAndDetermineSessionStatus(base: base, playSessionId: playSessionId, accessToken: accessToken, debug: debug)
-                        }
-                        return makeResolved(url: authed, status: nil)
-                    }
-                    if debug { print("[ResolveStream] TS source with no TranscodingUrl; giving up") }
-                    return makeResolved(url: nil, status: "Unknown")
-                } else {
-                    if let p = directPath {
-                        let adjusted = replaceLocalhostWithServerHostAndPort(in: p, serverBase: base)
-                        let authed = ensureApiKeyParam(in: adjusted, token: accessToken)
-                        if debug { print("[ResolveStream] Using direct path (non-TS) -> \(authed)") }
-                        return makeResolved(url: authed, status: "DirectPlay")
-                    }
-                    if let turl = transcodingUrlInitial, let final = buildAbsoluteURL(base: base, pathOrUrl: turl) {
-                        let authed = ensureApiKeyParam(in: final, token: accessToken)
-                        if debug { print("[ResolveStream] No direct path; falling back to TranscodingUrl (non-TS) -> \(authed)") }
-                        Task.detached {
-                            _ = await pollAndDetermineSessionStatus(base: base, playSessionId: playSessionId, accessToken: accessToken, debug: debug)
-                        }
-                        return makeResolved(url: authed, status: nil)
-                    }
-                    return makeResolved(url: nil, status: "Unknown")
-                }
+            // Direct Play (Safe Formats Only)
+            if supportsDirectPlay, let p = directPath {
+                let adjusted = replaceLocalhostWithServerHostAndPort(in: p, serverBase: base)
+                let authed = ensureApiKeyParam(in: adjusted, token: accessToken)
+                return makeResolved(url: authed, status: "DirectPlay")
             }
+
+            // Standard Transcode/Remux from PlaybackInfo
+            if let turl = transcodingUrlInitial, let final = buildAbsoluteURL(base: base, pathOrUrl: turl) {
+                let authed = ensureApiKeyParam(in: final, token: accessToken)
+                return makeResolved(url: authed, status: "Transcoding/Remuxing")
+            }
+
+            // Forced Fallback: Ask explicitly for a highly compatible TS/H264 HLS stream
+            if debug { print("[ResolveStream] No TranscodingUrl provided; requesting forced Live TV HLS transcode.") }
+            if let turl = await requestForcedTranscodingUrl(
+                itemId: channelId, userId: userId, serverURL: base,
+                accessToken: accessToken, deviceId: deviceId,
+                deviceName: resolvedDeviceName, clientVersion: clientVersion,
+                mediaSourceId: mediaSourceIdInitial, debug: debug
+            ), let final = buildAbsoluteURL(base: base, pathOrUrl: turl) {
+                let authed = ensureApiKeyParam(in: final, token: accessToken)
+                return makeResolved(url: authed, status: "Forced Transcoding")
+            }
+
+            return makeResolved(url: nil, status: "Unknown")
         } catch {
             if debug { print("[ResolveStream] Error: \(error)") }
             return ResolvedStream(url: nil, playSessionId: nil, serverStatus: "Error")
@@ -376,165 +279,44 @@ struct JFOpenLiveStreamService {
 
     static func resolveStreamURLWithSession(appState: AppState, channelId: String, debug: Bool = false) async -> ResolvedStream {
         await resolveStreamURLWithSession(
-            channelId: channelId,
-            userId: appState.userID,
-            serverURL: appState.serverURL,
-            accessToken: appState.accessToken,
-            deviceId: appState.deviceId,
-            deviceName: appState.clientDevice,
-            clientVersion: appState.clientVersion,
-            debug: debug
+            channelId: channelId, userId: appState.userID, serverURL: appState.serverURL,
+            accessToken: appState.accessToken, deviceId: appState.deviceId,
+            deviceName: appState.clientDevice, clientVersion: appState.clientVersion, debug: debug
         )
     }
 
-    private static func pollAndDetermineSessionStatus(
-        base: String,
-        playSessionId: String?,
-        accessToken: String,
-        debug: Bool = false
-    ) async -> String? {
-        guard let sid = playSessionId, !sid.isEmpty else { return nil }
-        let info = await pollSessionStatus(
-            base: base, playSessionId: sid,
-            accessToken: accessToken,
-            attempts: 4, interval: 1.0,
-            debug: debug
-        )
-        guard let t = info else { return nil }
-        if let isVideoDirect = t.isVideoDirect {
-            if isVideoDirect {
-                if debug { print("[SessionStatus] Video is direct -> Remuxing") }
-                return "Remuxing"
-            } else {
-                if debug { print("[SessionStatus] Video is not direct -> Transcoding") }
-                return "Transcoding"
-            }
-        }
-        return nil
-    }
-
-    private struct _TranscodingInfo: Decodable {
-        let isVideoDirect: Bool?
-        let isAudioDirect: Bool?
-        let transcodeReasons: [String]?
-
-        private enum CodingKeys: String, CodingKey {
-            case isVideoDirect = "IsVideoDirect"
-            case isAudioDirect = "IsAudioDirect"
-            case transcodeReasons = "TranscodeReasons"
-        }
-    }
-
-    private static func fetchSessionTranscodingInfo(
-        base: String,
-        playSessionId: String,
-        accessToken: String,
-        debug: Bool = false
-    ) async -> _TranscodingInfo? {
-        guard let url = URL(string: base + "/Sessions/" + playSessionId) else { return nil }
-        var req = URLRequest(url: url)
-        req.httpMethod = "GET"
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        if !accessToken.isEmpty { req.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token") }
-        do {
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return nil }
-            if let info = try? JSONDecoder().decode(_TranscodingInfo.self, from: data) { return info }
-            struct Wrapper: Decodable { let TranscodingInfo: _TranscodingInfo? }
-            if let wrap = try? JSONDecoder().decode(Wrapper.self, from: data) { return wrap.TranscodingInfo }
-            return nil
-        } catch {
-            if debug { print("[FetchSession] error: \(error)") }
-            return nil
-        }
-    }
-
-    private static func pollSessionStatus(
-        base: String,
-        playSessionId: String,
-        accessToken: String,
-        attempts: Int = 4,
-        interval: TimeInterval = 1.0,
-        debug: Bool = false
-    ) async -> _TranscodingInfo? {
-        var last: _TranscodingInfo? = nil
-        for i in 0..<max(1, attempts) {
-            if let info = await fetchSessionTranscodingInfo(base: base, playSessionId: playSessionId, accessToken: accessToken, debug: debug) {
-                last = info
-                if info.isVideoDirect != nil || info.isAudioDirect != nil || (info.transcodeReasons != nil && !(info.transcodeReasons?.isEmpty ?? true)) {
-                    return info
-                }
-            }
-            if i < attempts - 1 {
-                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
-            }
-        }
-        return last
-    }
-
+    // MARK: - Forced Fallback for Live TV
+    
     private static func requestForcedTranscodingUrl(
-        itemId: String,
-        userId: String,
-        serverURL: String,
-        accessToken: String,
-        deviceId: String,
-        deviceName: String?,
-        clientVersion: String,
-        mediaSourceId: String?,
-        debug: Bool
+        itemId: String, userId: String, serverURL: String, accessToken: String,
+        deviceId: String, deviceName: String?, clientVersion: String,
+        mediaSourceId: String?, debug: Bool
     ) async -> String? {
-        typealias CopyFlags = (videoCopy: Bool, audioCopy: Bool)
-        let attempts: [CopyFlags] = [
-            (videoCopy: true, audioCopy: true),
-            (videoCopy: false, audioCopy: false)
-        ]
-
-        return await withTaskGroup(of: String?.self) { group in
-            for flags in attempts {
-                group.addTask {
-                    do {
-                        let (_, turl, _, _) = try await JFPlaybackInfoService.fetchPlaybackInfoWithTranscodingUrl(
-                            itemId: itemId,
-                            userId: userId,
-                            serverURL: serverURL,
-                            accessToken: accessToken,
-                            deviceId: deviceId,
-                            deviceName: deviceName,
-                            clientVersion: clientVersion,
-                            maxBitrate: 60_000_000,
-                            enableDirectPlay: false,
-                            
-                            // FIX 4: Do not force H.264 / TS in the fallback. Allow Direct Stream HEVC into fMP4 HLS!
-                            enableDirectStream: true,
-                            enableTranscoding: true,
-                            requireAvc: false,
-                            audioCodec: "aac,ac3,eac3",
-                            videoCodec: "hevc,h265,h264",
-                            transcodingProtocol: "hls",
-                            transcodingContainer: "mp4",
-                            
-                            allowVideoStreamCopy: flags.videoCopy,
-                            allowAudioStreamCopy: flags.audioCopy,
-                            mediaSourceId: mediaSourceId,
-                            debug: debug
-                        )
-                        return turl
-                    } catch {
-                        if debug { print("[ForcedTranscode] error: \(error)") }
-                        return nil
-                    }
-                }
-            }
-
-            var result: String? = nil
-            for await maybe in group {
-                if let url = maybe {
-                    result = url
-                    group.cancelAll()
-                    break
-                }
-            }
-            return result
+        do {
+            // For Live TV Fallback: Force standard HLS (ts container) and H.264.
+            // This prevents fMP4 initialization atom issues with active tuners.
+            let (_, turl, _, _) = try await JFPlaybackInfoService.fetchPlaybackInfoWithTranscodingUrl(
+                itemId: itemId, userId: userId, serverURL: serverURL, accessToken: accessToken,
+                deviceId: deviceId, deviceName: deviceName, clientVersion: clientVersion,
+                maxBitrate: 60_000_000,
+                enableDirectPlay: false,
+                enableDirectStream: false, // Force it to generate a new playlist
+                enableTranscoding: true,
+                requireAvc: true,
+                audioCodec: "aac,ac3",
+                videoCodec: "h264",
+                transcodingProtocol: "hls",
+                transcodingContainer: "ts", // strictly ts for live tuner stability
+                allowVideoStreamCopy: true,
+                allowAudioStreamCopy: true,
+                mediaSourceId: mediaSourceId,
+                debug: debug,
+                isLiveTV: true
+            )
+            return turl
+        } catch {
+            if debug { print("[ForcedTranscode] error: \(error)") }
+            return nil
         }
     }
 }
