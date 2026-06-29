@@ -76,11 +76,29 @@
 			);
 			target = EBCC8A0B2DA88899003DF1A6 /* LiveFin */;
 		};
+		EB18D7DB2FF2FEEA001123BC /* Exceptions for "Shared" folder in "LiveFin Watch App" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Components/DemoMode/DemoChannel.swift,
+			);
+			target = EBE19BBF2F058A7A00C21C63 /* LiveFin Watch App */;
+		};
+		EB18D7DC2FF2FEEB001123BC /* Exceptions for "Shared" folder in "LiveFin tvOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Components/DemoMode/DemoChannel.swift,
+			);
+			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		EB130A632EDB353D00381D60 /* Shared */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				EB18D7DB2FF2FEEA001123BC /* Exceptions for "Shared" folder in "LiveFin Watch App" target */,
+				EB18D7DC2FF2FEEB001123BC /* Exceptions for "Shared" folder in "LiveFin tvOS" target */,
+			);
 			path = Shared;
 			sourceTree = "<group>";
 		};
@@ -188,6 +206,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				EB18D7DA2FF2FE06001123BC /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				EB130A632EDB353D00381D60 /* Shared */,
@@ -212,6 +231,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				EB18D7D62FF2FDFB001123BC /* PBXTargetDependency */,
 				EBE19BC92F058A8300C21C63 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
@@ -281,6 +301,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				EB18D7D82FF2FE02001123BC /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				EB130A632EDB353D00381D60 /* Shared */,
@@ -428,6 +449,18 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		EB18D7D62FF2FDFB001123BC /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = EB18D7D52FF2FDFB001123BC /* JellyfinAPI */;
+		};
+		EB18D7D82FF2FE02001123BC /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = EB18D7D72FF2FE02001123BC /* JellyfinAPI */;
+		};
+		EB18D7DA2FF2FE06001123BC /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = EB18D7D92FF2FE06001123BC /* JellyfinAPI */;
+		};
 		EBCC8A1B2DA8889B003DF1A6 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = EBCC8A0B2DA88899003DF1A6 /* LiveFin */;
@@ -458,7 +491,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = LiveFin/LiveFin/Info.plist;
+				INFOPLIST_FILE = LiveFin/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIUserInterfaceStyle = Automatic;
@@ -493,7 +526,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = LiveFin/LiveFin/Info.plist;
+				INFOPLIST_FILE = LiveFin/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIUserInterfaceStyle = Automatic;
@@ -651,7 +684,7 @@
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = LiveFin/LiveFin/Info.plist;
+				INFOPLIST_FILE = LiveFin/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app requires access to the local network to connect to your Jellyfin server.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -685,7 +718,7 @@
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = LiveFin/LiveFin/Info.plist;
+				INFOPLIST_FILE = LiveFin/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app requires access to the local network to connect to your Jellyfin server.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -792,7 +825,7 @@
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = LiveFin/LiveFin/Info.plist;
+				INFOPLIST_FILE = LiveFin/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = LIveFin;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.kpgamingz.LiveFin;
@@ -830,7 +863,7 @@
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = LiveFin/LiveFin/Info.plist;
+				INFOPLIST_FILE = LiveFin/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = LIveFin;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.kpgamingz.LiveFin;
@@ -934,6 +967,21 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		EB18D7D52FF2FDFB001123BC /* JellyfinAPI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = EBCC8A7E2DA88B95003DF1A6 /* XCRemoteSwiftPackageReference "jellyfin-sdk-swift" */;
+			productName = JellyfinAPI;
+		};
+		EB18D7D72FF2FE02001123BC /* JellyfinAPI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = EBCC8A7E2DA88B95003DF1A6 /* XCRemoteSwiftPackageReference "jellyfin-sdk-swift" */;
+			productName = JellyfinAPI;
+		};
+		EB18D7D92FF2FE06001123BC /* JellyfinAPI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = EBCC8A7E2DA88B95003DF1A6 /* XCRemoteSwiftPackageReference "jellyfin-sdk-swift" */;
+			productName = JellyfinAPI;
+		};
 		EBCC8A7F2DA88B95003DF1A6 /* JellyfinAPI */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = EBCC8A7E2DA88B95003DF1A6 /* XCRemoteSwiftPackageReference "jellyfin-sdk-swift" */;
