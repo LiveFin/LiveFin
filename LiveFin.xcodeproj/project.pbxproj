@@ -83,6 +83,13 @@
 			);
 			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
 		};
+		EB18D7D02FF2F8B3001123BC /* Exceptions for "LiveFin" folder in "LiveFin" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = EBCC8A0B2DA88899003DF1A6 /* LiveFin */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -102,6 +109,7 @@
 		EBCC8A0E2DA88899003DF1A6 /* LiveFin */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
+				EB18D7D02FF2F8B3001123BC /* Exceptions for "LiveFin" folder in "LiveFin" target */,
 				EB18D71C2FF2F5F6001123BC /* Exceptions for "LiveFin" folder in "LiveFin Watch App" target */,
 				EB18D71D2FF2F5F6001123BC /* Exceptions for "LiveFin" folder in "LiveFin tvOS" target */,
 			);
@@ -466,7 +474,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "LiveFin tvOS/Info.plist";
+				INFOPLIST_FILE = LiveFin/LiveFin/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIUserInterfaceStyle = Automatic;
@@ -501,7 +509,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "LiveFin tvOS/Info.plist";
+				INFOPLIST_FILE = LiveFin/LiveFin/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIUserInterfaceStyle = Automatic;
@@ -800,6 +808,7 @@
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = LiveFin/LiveFin/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = LIveFin;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.kpgamingz.LiveFin;
@@ -837,6 +846,7 @@
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = LiveFin/LiveFin/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = LIveFin;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.kpgamingz.LiveFin;
