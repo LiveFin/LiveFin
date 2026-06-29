@@ -1,15 +1,21 @@
 {
-  "features" : [
-    "refractivity",
-    "specular-location"
-  ],
   "fill-specializations" : [
     {
-      "value" : "automatic"
+      "value" : {
+        "linear-gradient" : [
+          "display-p3:0.00000,1.00000,0.78702,1.00000",
+          "display-p3:0.00000,0.58508,0.96783,1.00000"
+        ]
+      }
     },
     {
       "appearance" : "dark",
-      "value" : "automatic"
+      "value" : {
+        "linear-gradient" : [
+          "display-p3:0.00047,0.29389,0.23969,1.00000",
+          "display-p3:0.00000,0.12785,0.21149,1.00000"
+        ]
+      }
     }
   ],
   "groups" : [
@@ -28,7 +34,7 @@
       "layers" : [
         {
           "glass" : true,
-          "hidden" : true,
+          "hidden" : false,
           "image-name" : "New Project.png",
           "name" : "New Project",
           "position" : {
@@ -58,140 +64,18 @@
       }
     },
     {
-      "blend-mode" : "normal",
-      "blur-material" : 0.5,
-      "layers" : [
-        {
-          "fill" : "none",
-          "glass" : true,
-          "image-name" : "Pupils.png",
-          "name" : "Pupils",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              -30.074069462403486,
-              -283.7109375
-            ]
-          }
-        }
-      ],
-      "lighting" : "individual",
-      "refractivity" : {
-        "depth" : 0.1442578125,
-        "enabled" : true,
-        "strength" : -0.5246875
-      },
-      "shadow" : {
-        "kind" : "none",
-        "opacity" : 0.6
-      },
-      "specular-specializations" : [
-        {
-          "value" : "inside"
-        },
-        {
-          "appearance" : "tinted",
-          "value" : "inside"
-        }
-      ],
-      "translucency" : {
-        "enabled" : true,
-        "value" : 0.2
-      }
-    },
-    {
       "blend-mode-specializations" : [
+        {
+          "value" : "normal"
+        },
         {
           "appearance" : "dark",
-          "value" : "normal"
-        },
-        {
-          "appearance" : "tinted",
-          "value" : "normal"
-        }
-      ],
-      "blur-material" : null,
-      "layers" : [
-        {
-          "image-name" : "Eyes.png",
-          "name" : "Eyes",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              -136.9490694624035,
-              -347.828125
-            ]
-          }
-        },
-        {
-          "glass" : true,
-          "hidden" : false,
-          "image-name" : "Fish.png",
-          "name" : "Fish"
-        },
-        {
-          "glass" : true,
-          "hidden" : true,
-          "image-name" : "New Project.png",
-          "name" : "New Project",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              -53.25,
-              -29.828125
-            ]
-          }
-        },
-        {
-          "glass" : true,
-          "image-name" : "Eyes Back.png",
-          "name" : "Eyes Back",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              -27.90625,
-              -347.828125
-            ]
-          }
-        }
-      ],
-      "lighting" : "individual",
-      "position" : {
-        "scale" : 1,
-        "translation-in-points" : [
-          20.875,
-          64.1171875
-        ]
-      },
-      "refractivity" : {
-        "depth" : 0.5,
-        "enabled" : true,
-        "strength" : 0
-      },
-      "shadow" : {
-        "kind" : "neutral",
-        "opacity" : 3.2
-      },
-      "specular" : true,
-      "translucency" : {
-        "enabled" : false,
-        "value" : 0.5
-      }
-    },
-    {
-      "blend-mode-specializations" : [
-        {
           "value" : "hard-light"
-        },
-        {
-          "appearance" : "dark",
-          "value" : "normal"
         }
       ],
       "blur-material" : null,
       "layers" : [
         {
-          "blend-mode" : "normal",
           "image-name" : "SMPTE_Color_Bars.svg.png",
           "name" : "SMPTE_Color_Bars.svg",
           "position" : {
