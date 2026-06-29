@@ -69,20 +69,6 @@
 			);
 			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
 		};
-		EB18D71C2FF2F5F6001123BC /* Exceptions for "LiveFin" folder in "LiveFin Watch App" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = EBE19BBF2F058A7A00C21C63 /* LiveFin Watch App */;
-		};
-		EB18D71D2FF2F5F6001123BC /* Exceptions for "LiveFin" folder in "LiveFin tvOS" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
-		};
 		EB18D7D02FF2F8B3001123BC /* Exceptions for "LiveFin" folder in "LiveFin" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -110,8 +96,6 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				EB18D7D02FF2F8B3001123BC /* Exceptions for "LiveFin" folder in "LiveFin" target */,
-				EB18D71C2FF2F5F6001123BC /* Exceptions for "LiveFin" folder in "LiveFin Watch App" target */,
-				EB18D71D2FF2F5F6001123BC /* Exceptions for "LiveFin" folder in "LiveFin tvOS" target */,
 			);
 			path = LiveFin;
 			sourceTree = "<group>";
