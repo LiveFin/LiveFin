@@ -69,37 +69,25 @@
 			);
 			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
 		};
-		EBCC8A812DA88C5E003DF1A6 /* Exceptions for "LiveFin" folder in "LiveFin" target */ = {
+		EB18D71C2FF2F5F6001123BC /* Exceptions for "LiveFin" folder in "LiveFin Watch App" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = EBCC8A0B2DA88899003DF1A6 /* LiveFin */;
+			target = EBE19BBF2F058A7A00C21C63 /* LiveFin Watch App */;
 		};
-		EBE19BDC2F058EE100C21C63 /* Exceptions for "Shared" folder in "LiveFin Watch App" target */ = {
+		EB18D71D2FF2F5F6001123BC /* Exceptions for "LiveFin" folder in "LiveFin tvOS" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				"Resources/LiveFin-Aura.icon",
-				"Resources/LiveFin-Broken.icon",
-				"Resources/LiveFin-Burple.icon",
-				"Resources/LiveFin-Jelly.icon",
-				"Resources/LiveFin-Noir.icon",
-				"Resources/LiveFin-Real.icon",
-				"Resources/LiveFin-Rojo.icon",
-				"Resources/LiveFin-Slime.icon",
-				"Resources/LiveFin-Yolo.icon",
-				Resources/LiveFin.icon,
+				Info.plist,
 			);
-			target = EBE19BBF2F058A7A00C21C63 /* LiveFin Watch App */;
+			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		EB130A632EDB353D00381D60 /* Shared */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				EBE19BDC2F058EE100C21C63 /* Exceptions for "Shared" folder in "LiveFin Watch App" target */,
-			);
 			path = Shared;
 			sourceTree = "<group>";
 		};
@@ -114,7 +102,8 @@
 		EBCC8A0E2DA88899003DF1A6 /* LiveFin */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				EBCC8A812DA88C5E003DF1A6 /* Exceptions for "LiveFin" folder in "LiveFin" target */,
+				EB18D71C2FF2F5F6001123BC /* Exceptions for "LiveFin" folder in "LiveFin Watch App" target */,
+				EB18D71D2FF2F5F6001123BC /* Exceptions for "LiveFin" folder in "LiveFin tvOS" target */,
 			);
 			path = LiveFin;
 			sourceTree = "<group>";
@@ -209,6 +198,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
+				EB130A632EDB353D00381D60 /* Shared */,
 				EB15E79E2EED2DCF00A778BD /* LiveFin tvOS */,
 			);
 			name = "LiveFin tvOS";
@@ -301,6 +291,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
+				EB130A632EDB353D00381D60 /* Shared */,
 				EBE19BC12F058A7A00C21C63 /* LIveFin Watch App */,
 			);
 			name = "LiveFin Watch App";
