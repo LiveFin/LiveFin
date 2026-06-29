@@ -668,7 +668,7 @@
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = LiveFin/Info.plist;
+				INFOPLIST_FILE = LiveFin/LiveFin/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app requires access to the local network to connect to your Jellyfin server.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -702,7 +702,7 @@
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = LiveFin/Info.plist;
+				INFOPLIST_FILE = LiveFin/LiveFin/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app requires access to the local network to connect to your Jellyfin server.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
