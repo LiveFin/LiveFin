@@ -60,7 +60,6 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "EBE19BBF2F058A7A00C21C63"
             BuildableName = "LiveFin Watch App.app"
-            BlueprintName = "LiveFin Watch App"
             ReferencedContainer = "container:LiveFin.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -77,7 +76,6 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "EBE19BBF2F058A7A00C21C63"
             BuildableName = "LiveFin Watch App.app"
-            BlueprintName = "LiveFin Watch App"
             ReferencedContainer = "container:LiveFin.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
