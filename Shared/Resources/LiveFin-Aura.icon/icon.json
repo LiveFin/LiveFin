@@ -3,8 +3,8 @@
     {
       "value" : {
         "linear-gradient" : [
-          "display-p3:0.66326,0.67414,1.00000,1.00000",
-          "display-p3:0.53155,1.00000,0.53793,1.00000"
+          "display-p3:0.42951,0.14567,1.00000,1.00000",
+          "display-p3:0.60561,1.00000,0.43163,1.00000"
         ]
       }
     },
@@ -104,7 +104,9 @@
           "fill-specializations" : [
             {
               "appearance" : "dark",
-              "value" : "none"
+              "value" : {
+                "solid" : "display-p3:0.94508,0.95595,0.95595,1.00000"
+              }
             }
           ],
           "glass-specializations" : [

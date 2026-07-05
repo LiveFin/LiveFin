@@ -18,13 +18,14 @@ final class DragonetPlayerViewModel: ObservableObject {
 
     // MARK: Published state
 
-    @Published var controlsVisible: Bool = true
+    @Published var controlsVisible: Bool  = true
     @Published var isPiPActive: Bool      = false
     @Published var isCCEnabled: Bool      = false
     @Published var isPlaying: Bool        = true
     @Published var isAtLiveEdge: Bool     = true
     @Published var isReloading: Bool      = false
-    @Published var isBuffering: Bool      = true // Drives the loading overlay
+    @Published var isBuffering: Bool      = true // Drives the loading spinner
+    @Published var hasRenderedVideo: Bool = false // Tracks if we have a frame to show
 
     // MARK: Player
 
@@ -158,7 +159,36 @@ final class DragonetPlayerViewModel: ObservableObject {
 
     func togglePlayPause() {
         if player.timeControlStatus == .paused {
+            guard let item = player.currentItem else {
+                player.play()
+                return
+            }
+
+            // 1. Check if we've fallen completely out of the server's HLS live window
+            if let seekableRange = item.seekableTimeRanges.last?.timeRangeValue {
+                let earliestAvailable = seekableRange.start
+                
+                // If our current time is older than the oldest available segment, the stream is dead.
+                if item.currentTime().seconds < earliestAvailable.seconds {
+                    goToLive()
+                    return
+                }
+            }
+            
+            // 2. Attempt to resume
             player.play()
+            
+            // 3. The "Dead Session" Catch
+            // If the server killed the transcode session, AVPlayer will hang infinitely.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 3_000_000_000) // 3-second grace period
+                guard let self = self else { return }
+                
+                // If it's still stuck buffering after 3 seconds, force a jump to the live edge.
+                if self.player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
+                    self.goToLive()
+                }
+            }
         } else {
             player.pause()
         }
@@ -167,14 +197,27 @@ final class DragonetPlayerViewModel: ObservableObject {
     func goToLive() {
         isReloading = true
         isBuffering = true
+        hasRenderedVideo = false
         lastPlaybackTime = .invalid
+        
+        // To force Emby/Jellyfin to jump to the true live edge instead of
+        // resuming its old transcode buffer, we MUST spin up a fresh session
+        // by generating a new PlaySessionId in the URL.
+        var components = URLComponents(url: streamURL, resolvingAgainstBaseURL: false)
+        if let queryItems = components?.queryItems {
+            var newItems = queryItems.filter { $0.name.caseInsensitiveCompare("PlaySessionId") != .orderedSame }
+            newItems.append(URLQueryItem(name: "PlaySessionId", value: UUID().uuidString.replacingOccurrences(of: "-", with: "")))
+            components?.queryItems = newItems
+        }
+        
+        guard let freshURL = components?.url else { return }
         
         let userAgent = "LiveFin iOS/\(appState.clientVersion)"
         var headers: [String: String] = ["User-Agent": userAgent]
         headers["X-Emby-Token"] = appState.accessToken
         headers["X-Emby-User-Id"] = appState.userID
 
-        let asset = AVURLAsset(url: streamURL, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
+        let asset = AVURLAsset(url: freshURL, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
         let fresh = AVPlayerItem(asset: asset)
         
         player.replaceCurrentItem(with: fresh)
@@ -387,6 +430,10 @@ final class DragonetPlayerViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 if self.lastPlaybackTime.isValid && time != self.lastPlaybackTime {
+                    // We've successfully advanced time, meaning a frame is rendered.
+                    if !self.hasRenderedVideo {
+                        self.hasRenderedVideo = true
+                    }
                     if self.isBuffering {
                         self.isBuffering = false
                     }
@@ -416,9 +463,9 @@ final class DragonetPlayerViewModel: ObservableObject {
             isAtLiveEdge = true
             return
         }
-        let edgeTime    = CMTimeRangeGetEnd(last)
+        let edgeTime    = last.end
         let currentTime = item.currentTime()
-        let lag         = CMTimeSubtract(edgeTime, currentTime).seconds
+        let lag         = edgeTime.seconds - currentTime.seconds
         isAtLiveEdge = lag < 10
     }
 
@@ -504,12 +551,19 @@ struct DragonetPlayerView: View {
             makePlayer()
                 .ignoresSafeArea()
 
-            // Fade Loading
-            loadingOverlay
+            // Buffer Background Image Overlay (Shows ONLY when blacked out)
+            bufferImageOverlay
+                .zIndex(1)
+                .allowsHitTesting(false)
+                .opacity(!vm.hasRenderedVideo ? 1 : 0)
+                .animation(.easeInOut(duration: 0.4), value: vm.hasRenderedVideo)
+
+            // Spinner (Shows anytime it buffers)
+            spinnerOverlay
                 .zIndex(2)
                 .allowsHitTesting(false)
                 .opacity(vm.isBuffering ? 1 : 0)
-                .animation(.easeInOut(duration: 0.4), value: vm.isBuffering)
+                .animation(.easeInOut(duration: 0.2), value: vm.isBuffering)
 
             // Fade Controls
             landscapeOverlay
@@ -540,28 +594,52 @@ struct DragonetPlayerView: View {
         }
     }
     
-    // MARK: - Loading Overlay View
+    // MARK: - Loading Overlays
     
-    private var loadingOverlay: some View {
+    private var bufferImageOverlay: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             
             if let targetId = appState.currentProgramId ?? channel?.id {
-                ChannelImageView(
-                    baseUrl: appState.serverURL,
-                    apiKey: appState.accessToken,
-                    channelId: targetId
-                )
-                .aspectRatio(contentMode: .fit)
+                let server = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
+                
+                // Directly format URL to force a max width & top quality for high-resolution 1080p rendering
+                let urlString = "\(server)/Items/\(targetId)/Images/Primary?api_key=\(appState.accessToken)&maxWidth=1920&quality=100"
+                
+                AsyncImage(url: URL(string: urlString)) { phase in
+                    switch phase {
+                    case .empty:
+                        Color.black
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                    case .failure:
+                        // Fallback gracefully just in case
+                        ChannelImageView(
+                            baseUrl: appState.serverURL,
+                            apiKey: appState.accessToken,
+                            channelId: targetId
+                        )
+                        .aspectRatio(contentMode: .fit)
+                    @unknown default:
+                        EmptyView()
+                    }
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea()
                 .opacity(0.3)
             }
-            
+        }
+    }
+    
+    private var spinnerOverlay: some View {
+        ZStack {
             ProgressView()
                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
                 .scaleEffect(2.0)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Core Player

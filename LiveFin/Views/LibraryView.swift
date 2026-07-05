@@ -183,8 +183,18 @@ class LibraryViewModel: ObservableObject {
 class CategoryViewModel: ObservableObject {
     @Published var items: [JFItemDto] = []
     @Published var isLoading = true
+    @Published var isFetchingMore = false
     @Published var availableGenres: [String] = []
     @Published var selectedGenre: String = "All"
+    @Published var searchText: String = ""
+    
+    private var currentViewId = ""
+    private var currentItemType = ""
+    private var currentAppState: AppState?
+    
+    private var startIndex = 0
+    private let limit = 50
+    private var hasMoreItems = true
     
     var filteredItems: [JFItemDto] {
         if selectedGenre == "All" {
@@ -193,21 +203,61 @@ class CategoryViewModel: ObservableObject {
         return items.filter { $0.Genres?.contains(selectedGenre) == true }
     }
     
-    func loadItems(viewId: String, itemType: String, appState: AppState) async {
+    func loadItems(viewId: String, itemType: String, appState: AppState, isInitial: Bool = true) async {
+        self.currentViewId = viewId
+        self.currentItemType = itemType
+        self.currentAppState = appState
+        
         guard !appState.serverURL.isEmpty, !appState.accessToken.isEmpty, !appState.userID.isEmpty else { return }
-        isLoading = true
+        
+        if isInitial {
+            isLoading = true
+            items.removeAll()
+        }
+        
+        startIndex = 0
+        hasMoreItems = true
+        
+        await fetchBatch(replace: true)
+        isLoading = false
+    }
+    
+    func loadMoreIfNeeded(currentItem item: JFItemDto) async {
+        guard hasMoreItems, !isFetchingMore, !isLoading, let appState = currentAppState else { return }
+        
+        // Trigger next batch when user is within 9 items from the bottom
+        guard let index = items.firstIndex(where: { $0.id == item.id }),
+              index >= items.count - 9 else { return }
+        
+        isFetchingMore = true
+        startIndex += limit
+        
+        await fetchBatch(replace: false)
+        isFetchingMore = false
+    }
+    
+    private func fetchBatch(replace: Bool) async {
+        guard let appState = currentAppState else { return }
         
         let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
         var components = URLComponents(string: "\(base)/Users/\(appState.userID)/Items")
         
-        components?.queryItems = [
-            URLQueryItem(name: "ParentId", value: viewId),
+        var queryItems = [
+            URLQueryItem(name: "ParentId", value: currentViewId),
             URLQueryItem(name: "Recursive", value: "true"),
             URLQueryItem(name: "SortBy", value: "SortName"),
             URLQueryItem(name: "SortOrder", value: "Ascending"),
-            URLQueryItem(name: "IncludeItemTypes", value: itemType),
+            URLQueryItem(name: "IncludeItemTypes", value: currentItemType),
+            URLQueryItem(name: "StartIndex", value: String(startIndex)),
+            URLQueryItem(name: "Limit", value: String(limit)),
             URLQueryItem(name: "Fields", value: "Overview,ImageTags,BackdropImageTags,Genres,ProductionYear,OfficialRating,SeriesName,SeriesId")
         ]
+        
+        if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            queryItems.append(URLQueryItem(name: "SearchTerm", value: searchText))
+        }
+        
+        components?.queryItems = queryItems
         
         guard let url = components?.url else { return }
         var request = URLRequest(url: url)
@@ -215,23 +265,26 @@ class CategoryViewModel: ObservableObject {
         
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                self.isLoading = false
-                return
-            }
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return }
             
             struct ItemsResponse: Decodable { let Items: [JFItemDto] }
             let decoded = try JSONDecoder().decode(ItemsResponse.self, from: data)
             
-            self.items = decoded.Items
+            if replace {
+                self.items = decoded.Items
+            } else {
+                self.items.append(contentsOf: decoded.Items)
+            }
             
-            let allGenres = decoded.Items.compactMap { $0.Genres }.flatMap { $0 }
+            // If the server returns fewer items than the current limit, we've exhausted the collection
+            if decoded.Items.count < limit {
+                hasMoreItems = false
+            }
+            
+            let allGenres = self.items.compactMap { $0.Genres }.flatMap { $0 }
             self.availableGenres = Array(Set(allGenres)).sorted()
-            
-            self.isLoading = false
         } catch {
             print("Failed to fetch category items/decoding error: \(error)")
-            self.isLoading = false
         }
     }
 }
@@ -351,7 +404,7 @@ struct HorizontalLibrariesRow: View {
         let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
         
         ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(alignment: .center, spacing: 12) {
+            LazyHStack(alignment: .center, spacing: 8) {
                 ForEach(Array(views.enumerated()), id: \.element.id) { index, view in
                     
                     NavigationLink(destination: LibraryCategoryView(viewDto: view).environmentObject(appState)) {
@@ -362,7 +415,6 @@ struct HorizontalLibrariesRow: View {
                                 CachedAsyncImage(url: url) { phase in
                                     switch phase {
                                     case .success(let image):
-                                        // Just the image, no text needed if we have a valid library cover
                                         image
                                             .resizable()
                                             .aspectRatio(contentMode: .fill)
@@ -376,8 +428,7 @@ struct HorizontalLibrariesRow: View {
                                 fallbackView(for: view, index: index)
                             }
                         }
-                        // Increased sizing for the Library Row Items
-                        .frame(width: 160, height: 104)
+                        .frame(width: 180, height: 104)
                         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .accessibilityLabel(Text(view.Name))
                     }
@@ -453,18 +504,18 @@ struct LibraryCategoryView: View {
         let type = viewDto.CollectionType?.lowercased() ?? ""
         if type == "movies" { return "Movie" }
         if type == "tvshows" { return "Series" }
-        // Fetch both if the type is "mixed", "homevideos", or undetermined
         return "Movie,Series"
     }
     
     var body: some View {
         ScrollView {
-            if viewModel.isLoading {
+            if viewModel.isLoading && viewModel.items.isEmpty {
                 ProgressView().padding(.top, 50)
             } else if viewModel.items.isEmpty {
-                Text("No media found in this library.")
+                Text("No media found matching your criteria.")
                     .foregroundColor(.secondary)
                     .padding(.top, 50)
+                    .frame(maxWidth: .infinity, alignment: .center)
             } else {
                 LazyVGrid(columns: columns, spacing: 22) {
                     ForEach(viewModel.filteredItems) { item in
@@ -472,18 +523,32 @@ struct LibraryCategoryView: View {
                             LibraryPosterCard(item: item)
                         }
                         .buttonStyle(.plain)
+                        .task {
+                            // Infinite scrolling pagination hook
+                            await viewModel.loadMoreIfNeeded(currentItem: item)
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
+                
+                if viewModel.isFetchingMore {
+                    ProgressView()
+                        .padding(.vertical, 16)
+                        .frame(maxWidth: .infinity)
+                }
             }
         }
         .navigationTitle(viewDto.Name)
+        .searchable(text: $viewModel.searchText, prompt: "Search \(viewDto.Name)")
         .toolbar { genrePicker }
-        .task {
-            if viewModel.items.isEmpty {
-                await viewModel.loadItems(viewId: viewDto.Id, itemType: itemTypeToFetch, appState: appState)
+        .task(id: viewModel.searchText) {
+            // Native SwiftUI optimization: This cancels the previous task execution automatically when typing changes
+            let isTyping = !viewModel.searchText.isEmpty
+            if isTyping {
+                try? await Task.sleep(nanoseconds: 300_000_000) // 300ms debounce
             }
+            await viewModel.loadItems(viewId: viewDto.Id, itemType: itemTypeToFetch, appState: appState, isInitial: !viewModel.isFetchingMore)
         }
     }
     

@@ -76,7 +76,8 @@ struct DragonetPlayer: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ vc: DragonetPlayerController, context: Context) {
-        context.coordinator.updateCaptionSelection(isCCEnabled)
+        // Caption selection is now fully handled by PlanktonPlayerViewModel natively.
+        // Doing it here causes a loop that overrides manual user track selections.
     }
 
     // MARK: - Coordinator
@@ -139,23 +140,6 @@ struct DragonetPlayer: UIViewControllerRepresentable {
                 } else if pip.isPictureInPicturePossible {
                     pip.startPictureInPicture()
                 }
-            }
-        }
-
-        // MARK: CC
-
-        func updateCaptionSelection(_ enabled: Bool) {
-            guard let item = parent.player.currentItem,
-                  let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible)
-            else { return }
-            
-            if enabled {
-                let opt = group.options.first {
-                    !$0.hasMediaCharacteristic(.containsOnlyForcedSubtitles)
-                }
-                item.select(opt, in: group)
-            } else {
-                item.select(nil, in: group)
             }
         }
 

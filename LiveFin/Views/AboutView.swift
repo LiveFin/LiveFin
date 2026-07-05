@@ -35,7 +35,7 @@ struct AboutView: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                     
-                    Text("LiveFin is an Live TV client app for Jellyfin.")
+                    Text("LiveFin is a Live TV client app for Jellyfin.")
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                     
@@ -63,7 +63,7 @@ struct AboutView: View {
                                 .font(.headline)
                                 .foregroundColor(.white)
                                 .frame(width: 250, height: 60)
-                                .background(Color.accentColor)
+                                .background(Color.red)
                         }
                     }
                     .padding(.horizontal)

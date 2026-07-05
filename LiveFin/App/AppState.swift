@@ -14,38 +14,33 @@ final class AppState: ObservableObject {
     @Published var serverURL: String = ""
     @Published var accessToken: String = ""
     @Published var userID: String = ""
-    @Published var username: String = "" // Added property for username
-    @Published var deviceId: String = KeychainHelper.load(key: "deviceUUID") ?? {
-        let newUUID = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
-        KeychainHelper.save(key: "deviceUUID", value: newUUID)
-        return newUUID
+    @Published var username: String = ""
+    
+    // GUARANTEED hardware isolation using the Vendor UUID
+    @Published var deviceId: String = {
+        let vendorId = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+        return vendorId
     }()
-    @Published var apiKey: String = "" // Add this to AppState
-    // User profile image cache
+    
+    @Published var apiKey: String = ""
     @Published var userPrimaryImageTag: String? = nil
     @Published var userProfileImage: UIImage? = nil
 
-    // New playback-related published properties
     @Published var currentPlaybackItemId: String? = nil
     @Published var isPlaying: Bool = false
     @Published var currentChannelImageUrl: String? = nil
     @Published var currentProgramTitle: String? = nil
     @Published var currentProgramSubtitle: String? = nil
-    // New: program identity + image tag for Now Playing artwork
     @Published var currentProgramId: String? = nil
     @Published var currentProgramPrimaryImageTag: String? = nil
-    @Published var currentProgramImageType: String? = nil // "Primary" or "Thumb"
-    @Published var currentProgramThumbImageTag: String? = nil // New: capture Thumb tag when available
-    // New: genres/tags for the current program (used by UI / related queries)
+    @Published var currentProgramImageType: String? = nil
+    @Published var currentProgramThumbImageTag: String? = nil
     @Published var currentProgramGenres: [String]? = nil
-    // New: whether the current program is a movie (used to suppress subtitles in player)
     @Published var currentProgramIsMovie: Bool = false
-    @Published var currentProgramStartDate: Date? = nil // New: track start time
-    @Published var currentProgramEndDate: Date? = nil   // New: track end time
-    // Global channel name cache (Id -> Name) populated by HomeViewModel and others
+    @Published var currentProgramStartDate: Date? = nil
+    @Published var currentProgramEndDate: Date? = nil
     @Published var channelNames: [String: String] = [:]
 
-    // EPG polling timer
     private var epgTimer: Timer?
 
     @Published var clientVersion: String = {
@@ -60,8 +55,22 @@ final class AppState: ObservableObject {
     @Published var serverVersion: String = ""
     @Published var isDemoMode: Bool = false
     @Published var loginError: String? = nil
+    
+    // MARK: - Modern Jellyfin Authorization Header
+    /// Generates the standard Authorization header required by modern Jellyfin servers
+    func getAuthorizationHeader(includeToken: Bool = true) -> String {
+        var parts = [
+            "Client=\"LiveFin\"",
+            "Device=\"\(clientDevice)\"",
+            "DeviceId=\"\(deviceId)\"",
+            "Version=\"\(clientVersion)\""
+        ]
+        if includeToken && !accessToken.isEmpty {
+            parts.insert("Token=\"\(accessToken)\"", at: 0)
+        }
+        return "MediaBrowser \(parts.joined(separator: ", "))"
+    }
 
-    // Helper: build absolute URL safely from serverURL and a path (handles leading slash)
     private func buildURL(_ path: String) -> URL? {
         guard !serverURL.isEmpty else { return nil }
         let base = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
@@ -69,11 +78,9 @@ final class AppState: ObservableObject {
         return URL(string: base + normalizedPath)
     }
 
-    // Small date helpers used across AppState
     private func startOfDay(_ date: Date) -> Date { Calendar.current.startOfDay(for: date) }
     private func endOfDay(_ date: Date) -> Date { Calendar.current.date(byAdding: .day, value: 1, to: startOfDay(date)) ?? date.addingTimeInterval(24*3600) }
 
-    // MARK: - Demo Mode Activation
     @MainActor
     private func activateDemoMode() {
         self.isDemoMode = true
@@ -88,7 +95,6 @@ final class AppState: ObservableObject {
         self.loginError = nil
     }
 
-    // MARK: - Normal User Activation
     @MainActor
     private func activateNormalUser(userId: String, userName: String, accessToken: String, client: JellyfinClient, serverURL: String) {
         self.isDemoMode = false
@@ -102,9 +108,24 @@ final class AppState: ObservableObject {
         let newApiKey = UUID().uuidString
         self.apiKey = newApiKey
         self.loginError = nil
-        KeychainHelper.save(key: "apiKey", value: newApiKey)
-        KeychainHelper.save(key: "userId", value: userId)
-        KeychainHelper.saveCredentials(server: serverURL, username: userName, accessToken: accessToken)
+        
+        let prefix = self.deviceId
+        
+        // Namespaced saving blocks iCloud collisions
+        KeychainHelper.save(key: "\(prefix)_apiKey", value: newApiKey)
+        KeychainHelper.save(key: "\(prefix)_userId", value: userId)
+        KeychainHelper.save(key: "\(prefix)_server", value: serverURL)
+        KeychainHelper.save(key: "\(prefix)_username", value: userName)
+        KeychainHelper.save(key: "\(prefix)_token", value: accessToken)
+        
+        // Scrub the iCloud keychain of the old global poison keys
+        KeychainHelper.delete(key: "apiKey")
+        KeychainHelper.delete(key: "userId")
+        KeychainHelper.delete(key: "serverURL")
+        KeychainHelper.delete(key: "username")
+        KeychainHelper.delete(key: "accessToken")
+        KeychainHelper.delete(key: "deviceUUID")
+        
 #if canImport(WatchConnectivity)
         WatchSyncManager.shared.sendLogin(serverURL: serverURL, accessToken: accessToken, apiKey: self.apiKey, userId: userId)
 #endif
@@ -156,9 +177,11 @@ final class AppState: ObservableObject {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.httpBody = requestData
-            let authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"\(clientDevice)\", DeviceId=\"\(deviceId)\", Version=\"\(clientVersion)\""
-            request.setValue(authHeader, forHTTPHeaderField: "X-Emby-Authorization")
+            
+            // Replaced legacy X-Emby-Authorization with modern Authorization header
+            request.setValue(getAuthorizationHeader(includeToken: false), forHTTPHeaderField: "Authorization")
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            
             let (data, response) = try await URLSession.shared.data(for: request)
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode != 200 {
@@ -190,11 +213,30 @@ final class AppState: ObservableObject {
     }
 
     @MainActor
+    func completeLogin(server: URL, userId: String, userName: String, accessToken: String) async {
+        let config = JellyfinClient.Configuration(
+            url: server,
+            client: "LiveFin",
+            deviceName: clientDevice,
+            deviceID: deviceId,
+            version: clientVersion
+        )
+        let clientWithToken = JellyfinClient(configuration: config, accessToken: accessToken)
+        activateNormalUser(userId: userId, userName: userName, accessToken: accessToken, client: clientWithToken, serverURL: server.absoluteString)
+        await fetchServerName()
+    }
+
+    @MainActor
     func restoreLogin() {
-        let creds = KeychainHelper.retrieveCredentials()
-        guard let server = creds.serverURL,
-              let username = creds.username,
-              let token = creds.accessToken else { return }
+        let prefix = self.deviceId
+        
+        // ONLY pull keys that explicitly belong to this hardware UUID
+        let server = KeychainHelper.load(key: "\(prefix)_server") ?? ""
+        let username = KeychainHelper.load(key: "\(prefix)_username") ?? ""
+        let token = KeychainHelper.load(key: "\(prefix)_token") ?? ""
+        
+        // If isolated keys don't exist, force the user to re-log in to cement the fix
+        guard !server.isEmpty, !token.isEmpty, !username.isEmpty else { return }
         
         let config = JellyfinClient.Configuration(
             url: URL(string: server)!,
@@ -210,9 +252,15 @@ final class AppState: ObservableObject {
         self.isLoggedIn = true
         self.isDemoMode = false
         Task { await fetchServerName() }
-        if let storedApiKey = KeychainHelper.load(key: "apiKey") { self.apiKey = storedApiKey }
-        if let storedUserId = KeychainHelper.load(key: "userId") { self.userID = storedUserId }
-        if let id = KeychainHelper.load(key: "userId"), let name = creds.username { self.user = UserDto(id: id, name: name) }
+        
+        let isolatedUserId = KeychainHelper.load(key: "\(prefix)_userId") ?? ""
+        self.apiKey = KeychainHelper.load(key: "\(prefix)_apiKey") ?? ""
+        self.userID = isolatedUserId
+        
+        if !isolatedUserId.isEmpty {
+            self.user = UserDto(id: isolatedUserId, name: username)
+        }
+        
 #if canImport(WatchConnectivity)
         if !server.isEmpty && !token.isEmpty {
             WatchSyncManager.shared.sendLogin(serverURL: server, accessToken: token, apiKey: self.apiKey, userId: self.userID)
@@ -244,7 +292,12 @@ final class AppState: ObservableObject {
     func logout() {
         resetState()
         if !isDemoMode {
-            KeychainHelper.deleteCredentials()
+            let prefix = self.deviceId
+            KeychainHelper.delete(key: "\(prefix)_server")
+            KeychainHelper.delete(key: "\(prefix)_username")
+            KeychainHelper.delete(key: "\(prefix)_token")
+            KeychainHelper.delete(key: "\(prefix)_userId")
+            KeychainHelper.delete(key: "\(prefix)_apiKey")
         }
     }
 
@@ -255,7 +308,7 @@ final class AppState: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token")
+        request.setValue(getAuthorizationHeader(), forHTTPHeaderField: "Authorization")
 
         let body: [String: Any] = [
             "ItemId": itemId,
@@ -286,7 +339,7 @@ final class AppState: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token")
+        request.setValue(getAuthorizationHeader(), forHTTPHeaderField: "Authorization")
 
         let body: [String: Any] = [
             "ItemId": itemId,
@@ -315,7 +368,7 @@ final class AppState: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token")
+        request.setValue(getAuthorizationHeader(), forHTTPHeaderField: "Authorization")
 
         var body: [String: Any] = [
             "ItemId": itemId,
@@ -348,11 +401,10 @@ final class AppState: ObservableObject {
 
     @MainActor
     func closeLiveStream(liveStreamId: String) {
-        // Fix for the 400 error: LiveStreams/Close requires the liveStreamId in the URL query string!
         guard let url = buildURL("/LiveStreams/Close?liveStreamId=\(liveStreamId)"), !accessToken.isEmpty else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token")
+        request.setValue(getAuthorizationHeader(), forHTTPHeaderField: "Authorization")
         
         URLSession.shared.dataTask(with: request) { _, response, error in
             if let error = error {
@@ -366,9 +418,7 @@ final class AppState: ObservableObject {
     @MainActor
     func startEPGPolling(for channelId: String, intervalSeconds: TimeInterval = 30) {
         stopEPGPolling()
-
         Task { await fetchCurrentProgram(channelId: channelId) }
-
         epgTimer = Timer.scheduledTimer(withTimeInterval: intervalSeconds, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             Task { await self.fetchCurrentProgram(channelId: channelId) }
@@ -384,7 +434,6 @@ final class AppState: ObservableObject {
     @MainActor
     func fetchCurrentProgram(channelId: String) async {
         guard let base = buildURL("/LiveTv/Programs") else { return }
-        // Build start and end times (now -> +1 hour) in UTC to avoid server TZ ambiguity
         let now = Date()
         let end = now.addingTimeInterval(3600)
         let iso = ISO8601DateFormatter()
@@ -408,7 +457,7 @@ final class AppState: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         if !accessToken.isEmpty {
-            request.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token")
+            request.setValue(getAuthorizationHeader(), forHTTPHeaderField: "Authorization")
         }
 
         do {
@@ -416,7 +465,6 @@ final class AppState: ObservableObject {
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 return
             }
-            // Decode response (prefer { Items: [...] }, fallback to array)
             var list: [[String: Any]] = []
             if let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 if let items = root["Items"] as? [[String: Any]] { list = items }
@@ -425,14 +473,8 @@ final class AppState: ObservableObject {
                 list = arr
             }
 
-            guard !list.isEmpty else {
-                // FIX: Don't clear metadata on empty EPG response - the program is still playing!
-                // Empty responses can happen due to temporary network delays or API issues.
-                // The metadata we set will remain valid until the actual program changes.
-                return
-            }
+            guard !list.isEmpty else { return }
 
-            // Find program that contains 'now'; else choose nearest upcoming; else latest before
             let parser = ISO8601DateFormatter()
             parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             var selected: [String: Any]? = nil
@@ -441,7 +483,6 @@ final class AppState: ObservableObject {
             for prog in list {
                 let startS = (prog["StartDate"] as? String) ?? (prog["StartDateUtc"] as? String)
                 let endS = (prog["EndDate"] as? String) ?? (prog["EndDateUtc"] as? String)
-                // Try with fractional seconds, then without as a fallback to be robust
                 func parse(_ s: String?) -> Date? {
                     guard let s = s else { return nil }
                     if let d = parser.date(from: s) { return d }
@@ -467,7 +508,6 @@ final class AppState: ObservableObject {
                 }
             }
             let program = selected ?? earliestAfterNow?.prog ?? latestBeforeNow?.prog ?? list.first!
-            // Extract times again for chosen program
             let startTimeString = program["StartDate"] as? String ?? program["StartDateUtc"] as? String
             let endTimeString = program["EndDate"] as? String ?? program["EndDateUtc"] as? String
             let programStartDate = (parser.date(from: startTimeString ?? "")) ?? {
@@ -478,8 +518,6 @@ final class AppState: ObservableObject {
             }()
 
             let title = program["Name"] as? String ?? program["SeriesName"] as? String
-            let overview = program["Overview"] as? String
-            // Use Id for images; ProgramId may not be a valid item endpoint
             let programId = (program["Id"] as? String)
             var primaryTag: String? = nil
             var imageType: String? = nil
@@ -497,17 +535,14 @@ final class AppState: ObservableObject {
                     }
                 }
             }
-            // Detect if program is a movie via common fields
             let typeStr = (program["Type"] as? String) ?? (program["ProgramType"] as? String)
             let isMovie = (typeStr?.caseInsensitiveCompare("Movie") == .orderedSame) || (program["IsMovie"] as? Bool == true)
 
             await MainActor.run {
                 self.currentProgramTitle = title
-                // Prefer series name or explicit episode title for subtitle. Do NOT use the program Overview (description)
                 if let series = program["SeriesName"] as? String, series != title {
                     self.currentProgramSubtitle = series
                 } else {
-                    // Try common episode title keys (EPG sources vary)
                     let episodeTitle = (program["EpisodeTitle"] as? String) ?? (program["EpisodeName"] as? String) ?? (program["PartTitle"] as? String)
                     if let ep = episodeTitle, !ep.isEmpty {
                         self.currentProgramSubtitle = ep
@@ -515,12 +550,10 @@ final class AppState: ObservableObject {
                         self.currentProgramSubtitle = nil
                     }
                 }
-                // Extract genres/tags from several possible shapes the server may return
                 var resolvedGenres: [String]? = nil
                 if let gs = program["Genres"] as? [String] {
                     resolvedGenres = gs
                 } else if let gsArr = program["Genres"] as? [[String: Any]] {
-                    // Some servers return array of objects { Name: "..." }
                     resolvedGenres = gsArr.compactMap { $0["Name"] as? String }
                 } else if let tags = program["Tags"] as? [String] {
                     resolvedGenres = tags
@@ -539,46 +572,26 @@ final class AppState: ObservableObject {
          }
      }
 
-    // MARK: - Report full client capabilities (adds ImageUrl for server devices/playstate)
     func reportFullClientCapabilities() {
         guard !accessToken.isEmpty else { return }
-        
         let normalizedIconUrl: String
-        // Convert local asset directly to Base64 to bypass Jellyfin CSP image loading restrictions.
-        // **IMPORTANT:** Ensure you add an image asset named "Logo" to your Xcode Assets.xcassets
         if let image = UIImage(named: "Logo"),
            let imageData = image.pngData() {
             let base64String = imageData.base64EncodedString()
             normalizedIconUrl = "data:image/png;base64,\(base64String)"
         } else {
-            print("[Capabilities] Warning: Asset 'Logo' not found. Using blank IconUrl.")
             normalizedIconUrl = ""
         }
-        
-        // Debug: show a snippet of the IconUrl string we'll send so it doesn't flood the console
-        print("[Capabilities] IconUrl to send: \(normalizedIconUrl.prefix(50))...")
-
-        // Call the manual JSON capabilities endpoint.
-        // By bypassing the SDK here, we avoid accidentally passing DeviceId as the SessionId,
-        // which causes Jellyfin to return a 404 Not Found.
         self.postCapabilitiesManually(iconUrl: normalizedIconUrl)
     }
 
-    // Manual JSON-body capabilities POST to /Sessions/Capabilities/Full
     private func postCapabilitiesManually(iconUrl: String) {
         guard let url = buildURL("/Sessions/Capabilities/Full"), !accessToken.isEmpty else { return }
-
-        // IMPORTANT: We do NOT append ?id=deviceId to the URL.
-        // The 'id' parameter in this Jellyfin endpoint expects a SessionId, not a DeviceId.
-        // Passing the DeviceId as the 'id' causes Jellyfin to return a 404 Not Found because
-        // it cannot find a session with that ID. Omitting it applies the capabilities to the current authenticated session.
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token")
-        let authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"\(clientDevice)\", DeviceId=\"\(deviceId)\", Version=\"\(clientVersion)\", Token=\"\(accessToken)\""
-        request.setValue(authHeader, forHTTPHeaderField: "X-Emby-Authorization")
+        request.setValue(getAuthorizationHeader(), forHTTPHeaderField: "Authorization")
 
         let supported: [String] = [
             JellyfinAPI.GeneralCommandType.play.rawValue,
@@ -599,91 +612,20 @@ final class AppState: ObservableObject {
             "IconUrl": iconUrl
         ]
 
-        // Build the actual HTTP body string we'll send, preferring to unescape forward slashes
         var finalBodyStr: String? = nil
         if let raw = try? JSONSerialization.data(withJSONObject: body, options: []) , let rawStr = String(data: raw, encoding: .utf8) {
-            // Replace escaped forward slashes with plain forward slashes so the server sees normal URLs
             finalBodyStr = rawStr.replacingOccurrences(of: "\\/", with: "/")
             request.httpBody = finalBodyStr!.data(using: .utf8)
         } else if let dbg = try? JSONSerialization.data(withJSONObject: body, options: .prettyPrinted), let dbgStr = String(data: dbg, encoding: .utf8) {
-            // Fallback - send the pretty-printed serialization if we couldn't do the compact one
             finalBodyStr = dbgStr
             request.httpBody = dbgStr.data(using: .utf8)
         } else {
-            // Last-resort: let the system serialize directly into Data
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-            if let data = request.httpBody { finalBodyStr = String(data: data, encoding: .utf8) }
         }
 
-        // Print the exact body we're sending so it's unambiguous in logs (no escaped slashes)
-        if let final = finalBodyStr {
-            print("[Capabilities] Posting body (sent, prefix truncated): \n\(final.prefix(300))...")
-        } else {
-            print("[Capabilities] Posting body: <unable to render body as string>")
-        }
-
-        // Debug: print the outgoing request URL, headers and the exact UTF-8 body string we'll send
-        if let requestURL = request.url { print("[Capabilities] POST (JSON) URL: \(requestURL.absoluteString)") }
-        if let headers = request.allHTTPHeaderFields { print("[Capabilities] POST (JSON) headers: \(headers)") }
-
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                print("[Capabilities] Failed to report: \(error)")
-                return
-            }
-            if let http = response as? HTTPURLResponse {
-                print("[Capabilities] Server response: \(http.statusCode)")
-                if http.statusCode != 204 && http.statusCode != 200 {
-                    if let data = data, let s = String(data: data, encoding: .utf8) { print("[Capabilities] Body: \(s)") }
-                }
-            }
-            // After posting capabilities, fetch Sessions and print parsed IconUrl/ImageUrl
-            // so we can verify what the server stored (this prints the parsed value, not raw JSON escape sequences).
-            Task {
-                await MainActor.run {
-                    self.debugLogCurrentSessionIcon()
-                }
-            }
-        }.resume()
+        URLSession.shared.dataTask(with: request) { data, response, error in }.resume()
     }
 
-    // Debug: inspect sessions and print any IconUrl/ImageUrl stored for this device
-    private func debugLogCurrentSessionIcon() {
-        guard let url = buildURL("/Sessions"), !accessToken.isEmpty else { return }
-        var req = URLRequest(url: url)
-        req.httpMethod = "GET"
-        req.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token")
-        let deviceIdLocal = self.deviceId
-        let deviceNameLocal = self.clientDevice
-        URLSession.shared.dataTask(with: req) { data, resp, err in
-            if let err = err { print("[Sessions] fetch error: \(err)"); return }
-            guard let data = data, let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
-            if let session = arr.first(where: { ($0["DeviceId"] as? String) == deviceIdLocal }) ?? arr.first(where: { ($0["DeviceName"] as? String) == deviceNameLocal }) {
-                if let caps = session["ClientCapabilities"] as? [String: Any] {
-                    if let icon = caps["IconUrl"] as? String { print("[Sessions] ClientCapabilities.IconUrl (prefix) = \(icon.prefix(50))...") }
-                    if let image = caps["ImageUrl"] as? String { print("[Sessions] ClientCapabilities.ImageUrl (prefix) = \(image.prefix(50))...") }
-                }
-                if let icon = session["IconUrl"] as? String { print("[Sessions] Session.IconUrl (prefix) = \(icon.prefix(50))...") }
-                if let image = session["ImageUrl"] as? String { print("[Sessions] Session.ImageUrl (prefix) = \(image.prefix(50))...") }
-                if let any = AppState.findIconUrlRecursively(in: session) { print("[Sessions] Found Icon/Image URL (recursive prefix) = \(any.prefix(50))...") }
-            } else {
-                print("[Sessions] No session matched deviceId=\(deviceIdLocal)")
-            }
-        }.resume()
-    }
-
-    private static func findIconUrlRecursively(in dict: [String: Any]) -> String? {
-        for (k, v) in dict {
-            if (k == "IconUrl" || k == "ImageUrl"), let s = v as? String { return s }
-            if let sub = v as? [String: Any], let s = findIconUrlRecursively(in: sub) { return s }
-            if let arr = v as? [[String: Any]] {
-                for el in arr { if let s = findIconUrlRecursively(in: el) { return s } }
-            }
-        }
-        return nil
-    }
-
-    // MARK: - User Profile Image Handling
     @MainActor
     func refreshUserProfileInfoAndImage() async {
         guard !serverURL.isEmpty, !accessToken.isEmpty, !userID.isEmpty else { return }
@@ -698,7 +640,7 @@ final class AppState: ObservableObject {
         guard let url = URL(string: base + "/Users/\(userID)") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
-        req.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token")
+        req.setValue(getAuthorizationHeader(), forHTTPHeaderField: "Authorization")
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return }
@@ -720,7 +662,7 @@ final class AppState: ObservableObject {
         guard let url = URL(string: urlString) else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
-        req.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token")
+        req.setValue(getAuthorizationHeader(), forHTTPHeaderField: "Authorization")
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return }
@@ -728,8 +670,6 @@ final class AppState: ObservableObject {
         } catch { print("[ProfileImage] Image fetch failed: \(error)") }
     }
 
-    // MARK: - Background EPG refresh
-    // This will be invoked from BGAppRefresh handler to warm local EPG cache files
     @MainActor
     func performBackgroundEPGRefresh() async {
         guard !serverURL.isEmpty else { return }
@@ -743,8 +683,6 @@ final class AppState: ObservableObject {
             let day = cal.date(byAdding: .day, value: off, to: today) ?? today
             await fetchAndCacheEPG(for: day)
         }
-
-        // Prune old files (same horizon as GuideView)
         pruneOldGuideEPGCacheFiles()
     }
 
@@ -769,7 +707,9 @@ final class AppState: ObservableObject {
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !accessToken.isEmpty { req.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token") }
+        if !accessToken.isEmpty {
+            req.setValue(getAuthorizationHeader(), forHTTPHeaderField: "Authorization")
+        }
 
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
@@ -788,7 +728,6 @@ final class AppState: ObservableObject {
             let decoded = try dec.decode(EPGProgramsResponseLocal.self, from: data)
             let items = decoded.Items ?? []
 
-            // Save to cache in GuideCache format
             try saveGuideEPGCache(for: day, items: items)
 
         } catch {
@@ -796,7 +735,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    // Guide cache helpers (mirrors GuideView cache naming/format)
     private var guideCacheFolderName: String { "GuideCache" }
     private var epgFilePrefix: String { "epg_day_" }
     private var epgFileExt: String { ".json" }
@@ -851,13 +789,10 @@ final class AppState: ObservableObject {
                     try? fm.removeItem(at: url)
                 }
             }
-        } catch {
-            // ignore
-        }
+        } catch {}
     }
 }
 
-// Allow AppState to be captured in @Sendable closures; it's main-actor confined so this is safe.
 extension AppState: @unchecked Sendable {}
 
 #if canImport(WatchConnectivity)
@@ -889,7 +824,6 @@ final class WatchSyncManager: NSObject, WCSessionDelegate {
         do { try WCSession.default.updateApplicationContext(["loggedOut": true]) } catch { }
     }
 
-    // WCSessionDelegate minimal stubs
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {}
 #if os(iOS)
     func sessionDidBecomeInactive(_ session: WCSession) {}

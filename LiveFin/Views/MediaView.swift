@@ -348,12 +348,28 @@ class MediaItemDetailViewModel: ObservableObject {
     
     func playNextUpDirectly() {
         guard let next = nextUpEpisode else { return }
-        self.streamContext = StreamContext(playlist: [next], startIndex: 0)
+        
+        // Check if the episode exists in the currently loaded season list
+        if let index = episodes.firstIndex(where: { $0.Id == next.Id }) {
+            // Pass the entire season playlist and start at this episode's index
+            self.streamContext = StreamContext(playlist: episodes, startIndex: index)
+        } else {
+            // Fallback just in case the season hasn't finished loading yet
+            self.streamContext = StreamContext(playlist: [next], startIndex: 0)
+        }
     }
     
     func playSeriesFirstEpisode() {
         guard let first = seriesFirstEpisode else { return }
-        self.streamContext = StreamContext(playlist: [first], startIndex: 0)
+        
+        // Check if the episode exists in the currently loaded season list
+        if let index = episodes.firstIndex(where: { $0.Id == first.Id }) {
+            // Pass the entire season playlist and start at the first episode
+            self.streamContext = StreamContext(playlist: episodes, startIndex: index)
+        } else {
+            // Fallback
+            self.streamContext = StreamContext(playlist: [first], startIndex: 0)
+        }
     }
 }
 

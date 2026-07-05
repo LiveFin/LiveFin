@@ -110,6 +110,8 @@ struct JFPlaybackInfoService {
         ], [
             "Format": "subrip", "Method": "Hls"
         ], [
+            "Format": "vtt", "Method": "External"
+        ],[
             "Format": "vtt", "Method": "Hls"
         ], [
             "Format": "ass", "Method": "External"
@@ -117,7 +119,6 @@ struct JFPlaybackInfoService {
             "Format": "ssa", "Method": "External"
         ]]
 
-        // CODEC PROFILES: Defines exact constraints for iOS hardware decoding
         var h264Conditions: [[String: Any]] = [
             [ "Condition": "LessThanEqual", "Property": "VideoLevel", "Value": "52" ]
         ]
@@ -127,12 +128,9 @@ struct JFPlaybackInfoService {
             [ "Condition": "LessThanEqual", "Property": "VideoBitDepth", "Value": "10", "IsRequired": false ],
             [ "Condition": "EqualsAny", "Property": "VideoRangeType", "Value": "SDR,HDR10,HLG,DOVI", "IsRequired": false ],
             [ "Condition": "EqualsAny", "Property": "VideoProfile", "Value": "Main,Main 10,Main10", "IsRequired": false ],
-            // MANDATORY FIX for Apple HEVC support: Prevents hev1 tag crashes in Safari/AVPlayer
             [ "Condition": "NotEquals", "Property": "VideoCodecTag", "Value": "hev1" ]
         ]
 
-        // MANDATORY FIX for Live TV: Apple devices cannot native play interlaced video (1080i).
-        // This forces the server to deinterlace Live TV streams before sending them to the app.
         if isLiveTV {
             let interlacedRule: [String: Any] = [
                 "Condition": "Equals",
@@ -171,6 +169,7 @@ struct JFPlaybackInfoService {
         requireAvc: Bool? = nil,
         audioCodec: String? = nil,
         videoCodec: String? = nil,
+        subtitleStreamIndex: Int? = nil, // Added Subtitle Stream Injection
         transcodingProtocol: String? = nil,
         transcodingContainer: String? = nil,
         allowVideoStreamCopy: Bool? = nil,
@@ -214,10 +213,14 @@ struct JFPlaybackInfoService {
             "RequireAvc": requireAvc ?? false
         ]
         
+        if let subIndex = subtitleStreamIndex {
+            body["SubtitleStreamIndex"] = subIndex
+        }
+        
         body["AudioCodec"] = audioCodec ?? "aac,ac3,eac3,mp3,alac,flac"
         body["VideoCodec"] = videoCodec ?? "hevc,h265,h264"
         body["TranscodingProtocol"] = transcodingProtocol ?? "hls"
-        body["TranscodingContainer"] = transcodingContainer ?? "mp4"
+        body["TranscodingContainer"] = transcodingContainer ?? (isLiveTV ? "ts" : "mp4")
         
         body["AllowVideoStreamCopy"] = allowVideoStreamCopy ?? false
         body["AllowAudioStreamCopy"] = allowAudioStreamCopy ?? true
@@ -250,6 +253,7 @@ struct JFPlaybackInfoService {
         requireAvc: Bool? = nil,
         audioCodec: String? = nil,
         videoCodec: String? = nil,
+        subtitleStreamIndex: Int? = nil, // Added Subtitle Stream Injection
         transcodingProtocol: String? = nil,
         transcodingContainer: String? = nil,
         allowVideoStreamCopy: Bool? = nil,
@@ -293,10 +297,14 @@ struct JFPlaybackInfoService {
             "RequireAvc": requireAvc ?? false
         ]
         
+        if let subIndex = subtitleStreamIndex {
+            body["SubtitleStreamIndex"] = subIndex
+        }
+        
         body["AudioCodec"] = audioCodec ?? "aac,ac3,eac3,mp3,alac,flac"
         body["VideoCodec"] = videoCodec ?? "hevc,h265,h264"
         body["TranscodingProtocol"] = transcodingProtocol ?? "hls"
-        body["TranscodingContainer"] = transcodingContainer ?? "mp4"
+        body["TranscodingContainer"] = transcodingContainer ?? (isLiveTV ? "ts" : "mp4")
         
         body["AllowVideoStreamCopy"] = allowVideoStreamCopy ?? true
         body["AllowAudioStreamCopy"] = allowAudioStreamCopy ?? true

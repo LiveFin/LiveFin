@@ -5,27 +5,44 @@
 //  Created by KPGamingz on 4/10/25.
 //
 
-
 import Security
 import SwiftUI
 
 class KeychainHelper {
+    
+    // Scopes the keychain items to your specific app to prevent collisions
+    static let service = Bundle.main.bundleIdentifier ?? "com.livefin.app"
+    
     static func save(key: String, value: String) {
         print("DEBUG: Saving to Keychain — key: \(key), value: \(value)")
         guard let valueData = value.data(using: .utf8) else { return }
+        
         let addQuery: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service, // Added Service Scope
             kSecAttrAccount: key,
-            kSecValueData: valueData
+            kSecValueData: valueData,
+            // CRITICAL: ThisDeviceOnly prevents iCloud from sharing this key to your Apple TV/other iPhones
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecAttrSynchronizable: kCFBooleanFalse! // Explicitly deny syncing
         ]
+        
         let status = SecItemAdd(addQuery as CFDictionary, nil)
+        
         if status == errSecDuplicateItem {
             // Update existing item
             let updateQuery: [CFString: Any] = [
                 kSecClass: kSecClassGenericPassword,
+                kSecAttrService: service,
                 kSecAttrAccount: key
             ]
-            let attrs: [CFString: Any] = [kSecValueData: valueData]
+            let attrs: [CFString: Any] = [
+                kSecValueData: valueData,
+                // Ensure updated items also stay strictly on this device
+                kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+                kSecAttrSynchronizable: kCFBooleanFalse!
+            ]
+            
             let updateStatus = SecItemUpdate(updateQuery as CFDictionary, attrs as CFDictionary)
             if updateStatus != errSecSuccess {
                 print("DEBUG: Keychain update failed for key \(key) status=\(updateStatus)")
@@ -41,9 +58,12 @@ class KeychainHelper {
         print("DEBUG: Loading from Keychain — key: \(key)")
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
             kSecAttrAccount: key,
             kSecReturnData: kCFBooleanTrue!,
-            kSecMatchLimit: kSecMatchLimitOne
+            kSecMatchLimit: kSecMatchLimitOne,
+            // Ensure we are only asking for local items
+            kSecAttrSynchronizable: kCFBooleanFalse!
         ]
         
         var result: AnyObject?
@@ -61,7 +81,9 @@ class KeychainHelper {
     static func delete(key: String) {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
-            kSecAttrAccount: key
+            kSecAttrService: service,
+            kSecAttrAccount: key,
+            kSecAttrSynchronizable: kCFBooleanFalse!
         ]
         
         SecItemDelete(query as CFDictionary)

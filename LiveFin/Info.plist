@@ -2,28 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleIdentifier</key>
-    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-
-    <key>CFBundleName</key>
-    <string>$(PRODUCT_NAME)</string>
-
-    <key>CFBundleDisplayName</key>
-    <string>$(PRODUCT_NAME)</string>
-
-    <key>CFBundleShortVersionString</key>
-    <string>$(MARKETING_VERSION)</string>
-
-    <key>CFBundleVersion</key>
-    <string>$(CURRENT_PROJECT_VERSION)</string>
-
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-
-    <key>CFBundleExecutable</key>
-    <string>$(EXECUTABLE_NAME)</string>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.livefin.app.epgrefresh</string>
@@ -131,12 +109,19 @@
 	<array>
 		<string>processing</string>
 		<string>audio</string>
+		<string>fetch</string>
 	</array>
 	<key>UTImportedTypeDeclarations</key>
 	<array>
 		<dict/>
 	</array>
 	<key>com.apple.developer.device-information.user-assigned-device-name</key>
+	<true/>
+	<key>com.apple.developer.device-information.user-assigned-device-name
+com.apple.developer.device-information.user-assigned-device-name
+com.apple.developer.device-information.user-assigned-device-name
+com.apple.developer.device-information.user-assigned-device-name
+com.apple.developer.device-information.user-assigned-device-name</key>
 	<true/>
 </dict>
 </plist>
