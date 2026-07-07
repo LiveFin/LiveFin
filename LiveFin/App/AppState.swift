@@ -6,6 +6,66 @@ import WatchConnectivity
 #endif
 @preconcurrency import JellyfinAPI
 
+// MARK: - Jellyfin v12 SDK Interceptor
+/// Silently catches third-party SDK requests and upgrades them to modern v12 Auth headers
+class JellyfinV12Interceptor: URLProtocol {
+    static var authHeader: String?
+    
+    override class func canInit(with request: URLRequest) -> Bool {
+        if request.value(forHTTPHeaderField: "X-JF-Intercepted") == "true" { return false }
+        
+        // Intercept if legacy headers are present from the SDK
+        if request.value(forHTTPHeaderField: "X-Emby-Token") != nil { return true }
+        
+        // Intercept if auth is missing entirely on API routes
+        if request.value(forHTTPHeaderField: "Authorization") == nil && authHeader != nil {
+            guard let urlStr = request.url?.absoluteString else { return false }
+            if urlStr.contains("/Items") || urlStr.contains("/Users") || urlStr.contains("/LiveTv") || urlStr.contains("/System") || urlStr.contains("/Sessions") {
+                return true
+            }
+        }
+        return false
+    }
+    
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { return request }
+    
+    override func startLoading() {
+        guard let mutableRequest = (request as NSURLRequest).mutableCopy() as? NSMutableURLRequest else { return }
+        
+        mutableRequest.setValue("true", forHTTPHeaderField: "X-JF-Intercepted") // Prevent infinite loops
+        
+        // Strip out the legacy headers the SDK is trying to send
+        mutableRequest.setValue(nil, forHTTPHeaderField: "X-Emby-Token")
+        mutableRequest.setValue(nil, forHTTPHeaderField: "X-Emby-Authorization")
+        mutableRequest.setValue(nil, forHTTPHeaderField: "X-Emby-User-Id")
+        mutableRequest.setValue(nil, forHTTPHeaderField: "X-Emby-Device-Id")
+        mutableRequest.setValue(nil, forHTTPHeaderField: "X-Emby-Device-Name")
+        mutableRequest.setValue(nil, forHTTPHeaderField: "X-Emby-Client")
+        mutableRequest.setValue(nil, forHTTPHeaderField: "X-Emby-Client-Version")
+        
+        // Inject the modern v12 Authorization header
+        if let header = JellyfinV12Interceptor.authHeader {
+            mutableRequest.setValue(header, forHTTPHeaderField: "Authorization")
+        }
+        
+        let task = URLSession.shared.dataTask(with: mutableRequest as URLRequest) { data, response, error in
+            if let error = error {
+                self.client?.urlProtocol(self, didFailWithError: error)
+                return
+            }
+            if let response = response {
+                self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .allowed)
+            }
+            if let data = data {
+                self.client?.urlProtocol(self, didLoad: data)
+            }
+            self.client?.urlProtocolDidFinishLoading(self)
+        }
+        task.resume()
+    }
+    
+    override func stopLoading() {}
+}
 
 final class AppState: ObservableObject {
     @Published var client: JellyfinClient?
@@ -16,7 +76,6 @@ final class AppState: ObservableObject {
     @Published var userID: String = ""
     @Published var username: String = ""
     
-    // GUARANTEED hardware isolation using the Vendor UUID
     @Published var deviceId: String = {
         let vendorId = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
         return vendorId
@@ -56,8 +115,12 @@ final class AppState: ObservableObject {
     @Published var isDemoMode: Bool = false
     @Published var loginError: String? = nil
     
+    init() {
+        // Register the interceptor instantly on boot to protect the SDK
+        URLProtocol.registerClass(JellyfinV12Interceptor.self)
+    }
+    
     // MARK: - Modern Jellyfin Authorization Header
-    /// Generates the standard Authorization header required by modern Jellyfin servers
     func getAuthorizationHeader(includeToken: Bool = true) -> String {
         var parts = [
             "Client=\"LiveFin\"",
@@ -68,7 +131,14 @@ final class AppState: ObservableObject {
         if includeToken && !accessToken.isEmpty {
             parts.insert("Token=\"\(accessToken)\"", at: 0)
         }
-        return "MediaBrowser \(parts.joined(separator: ", "))"
+        let finalHeader = "MediaBrowser \(parts.joined(separator: ", "))"
+        
+        // Sync the auth token to the interceptor so SDK calls can be rewritten
+        if !accessToken.isEmpty {
+            JellyfinV12Interceptor.authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"\(clientDevice)\", DeviceId=\"\(deviceId)\", Version=\"\(clientVersion)\", Token=\"\(accessToken)\""
+        }
+        
+        return finalHeader
     }
 
     private func buildURL(_ path: String) -> URL? {
@@ -105,26 +175,28 @@ final class AppState: ObservableObject {
         self.accessToken = accessToken
         self.client = client
         self.serverURL = serverURL
-        let newApiKey = UUID().uuidString
-        self.apiKey = newApiKey
+        
+        // FIXED: Set apiKey to the accessToken so images actually load in v12
+        self.apiKey = accessToken
         self.loginError = nil
         
         let prefix = self.deviceId
         
-        // Namespaced saving blocks iCloud collisions
-        KeychainHelper.save(key: "\(prefix)_apiKey", value: newApiKey)
+        KeychainHelper.save(key: "\(prefix)_apiKey", value: accessToken)
         KeychainHelper.save(key: "\(prefix)_userId", value: userId)
         KeychainHelper.save(key: "\(prefix)_server", value: serverURL)
         KeychainHelper.save(key: "\(prefix)_username", value: userName)
         KeychainHelper.save(key: "\(prefix)_token", value: accessToken)
         
-        // Scrub the iCloud keychain of the old global poison keys
         KeychainHelper.delete(key: "apiKey")
         KeychainHelper.delete(key: "userId")
         KeychainHelper.delete(key: "serverURL")
         KeychainHelper.delete(key: "username")
         KeychainHelper.delete(key: "accessToken")
         KeychainHelper.delete(key: "deviceUUID")
+        
+        // Prime the interceptor instantly
+        _ = getAuthorizationHeader(includeToken: true)
         
 #if canImport(WatchConnectivity)
         WatchSyncManager.shared.sendLogin(serverURL: serverURL, accessToken: accessToken, apiKey: self.apiKey, userId: userId)
@@ -147,6 +219,7 @@ final class AppState: ObservableObject {
         self.loginError = nil
         self.userPrimaryImageTag = nil
         self.userProfileImage = nil
+        JellyfinV12Interceptor.authHeader = nil // Clear interceptor
 #if canImport(WatchConnectivity)
         WatchSyncManager.shared.sendLogout()
 #endif
@@ -178,7 +251,6 @@ final class AppState: ObservableObject {
             request.httpMethod = "POST"
             request.httpBody = requestData
             
-            // Replaced legacy X-Emby-Authorization with modern Authorization header
             request.setValue(getAuthorizationHeader(includeToken: false), forHTTPHeaderField: "Authorization")
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             
@@ -230,12 +302,10 @@ final class AppState: ObservableObject {
     func restoreLogin() {
         let prefix = self.deviceId
         
-        // ONLY pull keys that explicitly belong to this hardware UUID
         let server = KeychainHelper.load(key: "\(prefix)_server") ?? ""
         let username = KeychainHelper.load(key: "\(prefix)_username") ?? ""
         let token = KeychainHelper.load(key: "\(prefix)_token") ?? ""
         
-        // If isolated keys don't exist, force the user to re-log in to cement the fix
         guard !server.isEmpty, !token.isEmpty, !username.isEmpty else { return }
         
         let config = JellyfinClient.Configuration(
@@ -249,12 +319,16 @@ final class AppState: ObservableObject {
         self.serverURL = server
         self.accessToken = token
         self.username = username
+        self.apiKey = token // FIXED: Map directly to the access token!
         self.isLoggedIn = true
         self.isDemoMode = false
+        
+        // Prime the interceptor for restored sessions
+        _ = getAuthorizationHeader(includeToken: true)
+        
         Task { await fetchServerName() }
         
         let isolatedUserId = KeychainHelper.load(key: "\(prefix)_userId") ?? ""
-        self.apiKey = KeychainHelper.load(key: "\(prefix)_apiKey") ?? ""
         self.userID = isolatedUserId
         
         if !isolatedUserId.isEmpty {
@@ -323,7 +397,6 @@ final class AppState: ObservableObject {
             if let error = error {
                 print("Jellyfin: Error reporting playback start: \(error)")
             } else {
-                print("Jellyfin: Reported playback start for \(itemId)")
                 DispatchQueue.main.async {
                     self?.currentPlaybackItemId = itemId
                     self?.isPlaying = true
@@ -352,13 +425,7 @@ final class AppState: ObservableObject {
 
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        URLSession.shared.dataTask(with: request) { _, _, error in
-            if let error = error {
-                print("Jellyfin: Error reporting playback progress: \(error)")
-            } else {
-                print("Jellyfin: Reported playback progress for \(itemId) at \(positionTicks) ticks")
-            }
-        }.resume()
+        URLSession.shared.dataTask(with: request) { _, _, error in }.resume()
     }
 
     @MainActor
@@ -383,12 +450,7 @@ final class AppState: ObservableObject {
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
-            if let error = error {
-                print("Jellyfin: Error reporting playback stopped: \(error)")
-            } else {
-                if let httpResponse = response as? HTTPURLResponse {
-                    print("Jellyfin: Reported playback stopped for \(itemId) (Status: \(httpResponse.statusCode))")
-                }
+            if error == nil {
                 DispatchQueue.main.async {
                     if self?.currentPlaybackItemId == itemId {
                         self?.currentPlaybackItemId = nil
@@ -405,14 +467,7 @@ final class AppState: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue(getAuthorizationHeader(), forHTTPHeaderField: "Authorization")
-        
-        URLSession.shared.dataTask(with: request) { _, response, error in
-            if let error = error {
-                print("Jellyfin: Error closing live stream tuner connection: \(error)")
-            } else if let http = response as? HTTPURLResponse {
-                print("Jellyfin: Closed active live stream tuner \(liveStreamId) (Status: \(http.statusCode))")
-            }
-        }.resume()
+        URLSession.shared.dataTask(with: request) { _, _, _ in }.resume()
     }
 
     @MainActor

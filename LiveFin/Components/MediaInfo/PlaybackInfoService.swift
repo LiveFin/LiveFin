@@ -189,15 +189,10 @@ struct JFPlaybackInfoService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token")
         
-        let authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"\(resolvedDeviceName)\", DeviceId=\"\(deviceId)\", Version=\"\(clientVersion)\""
-        request.setValue(authHeader, forHTTPHeaderField: "X-Emby-Authorization")
-        request.setValue(userId, forHTTPHeaderField: "X-Emby-User-Id")
-        request.setValue("LiveFin", forHTTPHeaderField: "X-Emby-Client")
-        request.setValue(resolvedDeviceName, forHTTPHeaderField: "X-Emby-Device-Name")
-        request.setValue(deviceId, forHTTPHeaderField: "X-Emby-Device-Id")
-        request.setValue(clientVersion, forHTTPHeaderField: "X-Emby-Client-Version")
+        // Modern Authorization Header for Jellyfin v12+
+        let modernAuthHeader = "MediaBrowser Client=\"LiveFin\", Device=\"\(resolvedDeviceName)\", DeviceId=\"\(deviceId)\", Version=\"\(clientVersion)\", Token=\"\(accessToken)\""
+        request.setValue(modernAuthHeader, forHTTPHeaderField: "Authorization")
         
         let userAgent = "LiveFin/\(clientVersion) (\(deviceInfo.model); \(deviceInfo.system) \(deviceInfo.version))"
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
@@ -273,15 +268,10 @@ struct JFPlaybackInfoService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token")
         
-        let authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"\(resolvedDeviceName)\", DeviceId=\"\(deviceId)\", Version=\"\(clientVersion)\""
-        request.setValue(authHeader, forHTTPHeaderField: "X-Emby-Authorization")
-        request.setValue(userId, forHTTPHeaderField: "X-Emby-User-Id")
-        request.setValue("LiveFin", forHTTPHeaderField: "X-Emby-Client")
-        request.setValue(resolvedDeviceName, forHTTPHeaderField: "X-Emby-Device-Name")
-        request.setValue(deviceId, forHTTPHeaderField: "X-Emby-Device-Id")
-        request.setValue(clientVersion, forHTTPHeaderField: "X-Emby-Client-Version")
+        // Modern Authorization Header for Jellyfin v12+
+        let modernAuthHeader = "MediaBrowser Client=\"LiveFin\", Device=\"\(resolvedDeviceName)\", DeviceId=\"\(deviceId)\", Version=\"\(clientVersion)\", Token=\"\(accessToken)\""
+        request.setValue(modernAuthHeader, forHTTPHeaderField: "Authorization")
         
         let userAgent = "LiveFin/\(clientVersion) (\(deviceInfo.model); \(deviceInfo.system) \(deviceInfo.version))"
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")

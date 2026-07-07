@@ -315,7 +315,7 @@ final class ProgramViewModel: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private nonisolated func fetchPrograms(serverURL: String, token: String, from basePath: String = "/LiveTv/Programs", params baseParams: [URLQueryItem]) async -> [JFProgram] {
+    private nonisolated func fetchPrograms(serverURL: String, authHeader: String, from basePath: String = "/LiveTv/Programs", params baseParams: [URLQueryItem]) async -> [JFProgram] {
         guard !serverURL.isEmpty else { return [] }
 
         func attempt(_ items: [URLQueryItem]) async -> [JFProgram]? {
@@ -324,7 +324,7 @@ final class ProgramViewModel: ObservableObject {
             comps?.queryItems = items
             guard let url = comps?.url else { return nil }
             var req = URLRequest(url: url); req.httpMethod = "GET"
-            if !token.isEmpty { req.setValue(token, forHTTPHeaderField: "X-Emby-Token") }
+            if !authHeader.isEmpty { req.setValue(authHeader, forHTTPHeaderField: "Authorization") }
             
             do {
                 let (data, resp) = try await URLSession.shared.data(for: req)
@@ -372,7 +372,7 @@ final class ProgramViewModel: ObservableObject {
         var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
         comps?.queryItems = [URLQueryItem(name: "fields", value: "ChannelId,ChannelName,RunTimeTicks,OfficialRating,Genres,SeriesName,EpisodeTitle,ParentIndexNumber,IndexNumber,IsRepeat,SeriesId,ItemId")]
         var req = URLRequest(url: comps?.url ?? url); req.httpMethod = "GET"
-        if !appState.accessToken.isEmpty { req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token") }
+        if !appState.accessToken.isEmpty { req.setValue(appState.getAuthorizationHeader(), forHTTPHeaderField: "Authorization") }
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return }
@@ -392,7 +392,7 @@ final class ProgramViewModel: ObservableObject {
         guard !appState.serverURL.isEmpty,
               let url = URL(string: appState.serverURL)?.appendingPathComponent("/LiveTv/Channels/\(cid)") else { return }
         var req = URLRequest(url: url); req.httpMethod = "GET"
-        if !appState.accessToken.isEmpty { req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token") }
+        if !appState.accessToken.isEmpty { req.setValue(appState.getAuthorizationHeader(), forHTTPHeaderField: "Authorization") }
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return }
@@ -420,7 +420,10 @@ final class ProgramViewModel: ObservableObject {
             URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,ChannelId,ChannelName,IsRepeat,SeriesId,ItemId")
         ]
         if let uid = appState.user?.id { params.append(URLQueryItem(name: "userId", value: uid)) }
-        let parsed = await fetchPrograms(serverURL: appState.serverURL, token: appState.accessToken, params: params)
+        
+        let authHeader = appState.getAuthorizationHeader()
+        let parsed = await fetchPrograms(serverURL: appState.serverURL, authHeader: authHeader, params: params)
+        
         channelSchedule = parsed.filter { ($0.startDate ?? .distantPast) > now }
         isLoadingUpcoming = false
     }
@@ -436,7 +439,7 @@ final class ProgramViewModel: ObservableObject {
         let seriesNameKey = program.seriesName.flatMap { $0.isEmpty ? nil : normTitle($0) }
         
         let serverURL = appState.serverURL
-        let token = appState.accessToken
+        let authHeader = appState.getAuthorizationHeader()
 
         guard let endWindow = Calendar.current.date(byAdding: .day, value: 14, to: now) else { return }
 
@@ -456,7 +459,7 @@ final class ProgramViewModel: ObservableObject {
             p.append(URLQueryItem(name: "IncludeItemTypes", value: "Program"))
             p.append(URLQueryItem(name: "Recursive", value: "true"))
             if let uid = appState.user?.id { p.append(URLQueryItem(name: "userId", value: uid)) }
-            return await fetchPrograms(serverURL: serverURL, token: token, from: "/Items", params: p)
+            return await fetchPrograms(serverURL: serverURL, authHeader: authHeader, from: "/Items", params: p)
         }()
 
         // Prong 2: Explicit ID search (Matches native Jellyfin series linking)
@@ -466,7 +469,7 @@ final class ProgramViewModel: ObservableObject {
             p.append(URLQueryItem(name: "SeriesId", value: sid))
             p.append(URLQueryItem(name: "librarySeriesId", value: sid))
             if let uid = appState.user?.id { p.append(URLQueryItem(name: "userId", value: uid)) }
-            return await fetchPrograms(serverURL: serverURL, token: token, from: "/LiveTv/Programs", params: p)
+            return await fetchPrograms(serverURL: serverURL, authHeader: authHeader, from: "/LiveTv/Programs", params: p)
         }()
         
         // Prong 3: Name fallback (In case SearchTerm is unsupported but Name works)
@@ -474,7 +477,7 @@ final class ProgramViewModel: ObservableObject {
             var p = baseParams
             p.append(URLQueryItem(name: "Name", value: term))
             if let uid = appState.user?.id { p.append(URLQueryItem(name: "userId", value: uid)) }
-            return await fetchPrograms(serverURL: serverURL, token: token, from: "/LiveTv/Programs", params: p)
+            return await fetchPrograms(serverURL: serverURL, authHeader: authHeader, from: "/LiveTv/Programs", params: p)
         }()
 
         let (res1, res2, res3) = await (searchFuture, seriesFuture, nameFuture)
@@ -561,7 +564,8 @@ final class ProgramViewModel: ObservableObject {
         ]
         
         let serverURL = appState.serverURL
-        let token = appState.accessToken
+        let authHeader = appState.getAuthorizationHeader()
+        
         if let uid = appState.user?.id { baseParams.append(URLQueryItem(name: "userId", value: uid)) }
 
         var pool: [JFProgram] = []
@@ -569,7 +573,7 @@ final class ProgramViewModel: ObservableObject {
         let topGenres = Array(Set(program.genres ?? [])).prefix(2)
         let cId = effectiveChannelId
 
-        async let similarFuture = fetchSimilarRelated(serverURL: serverURL, token: token)
+        async let similarFuture = fetchSimilarRelated(serverURL: serverURL, authHeader: authHeader)
 
         await withTaskGroup(of: [JFProgram].self) { group in
             for tag in tags {
@@ -581,7 +585,7 @@ final class ProgramViewModel: ObservableObject {
                     case "kids": q.append(URLQueryItem(name: "isKids", value: "true"))
                     default: q.append(URLQueryItem(name: "genres", value: tag))
                     }
-                    return await self.fetchPrograms(serverURL: serverURL, token: token, params: q)
+                    return await self.fetchPrograms(serverURL: serverURL, authHeader: authHeader, params: q)
                 }
             }
 
@@ -591,14 +595,14 @@ final class ProgramViewModel: ObservableObject {
                     q.append(URLQueryItem(name: "genres", value: topGenres.joined(separator: ",")))
                     if self.program.isLikelyMovie { q.append(URLQueryItem(name: "IsMovie", value: "true")) }
                     if self.program.isSeries { q.append(URLQueryItem(name: "IsSeries", value: "true")) }
-                    return await self.fetchPrograms(serverURL: serverURL, token: token, params: q)
+                    return await self.fetchPrograms(serverURL: serverURL, authHeader: authHeader, params: q)
                 }
             }
 
             if let channelId = cId {
                 group.addTask {
                     var q = baseParams; q.append(URLQueryItem(name: "channelIds", value: channelId))
-                    return await self.fetchPrograms(serverURL: serverURL, token: token, params: q)
+                    return await self.fetchPrograms(serverURL: serverURL, authHeader: authHeader, params: q)
                 }
             }
 
@@ -643,7 +647,7 @@ final class ProgramViewModel: ObservableObject {
         loadRelatedImages = true
     }
 
-    private nonisolated func fetchSimilarRelated(serverURL: String, token: String) async -> [JFProgram] {
+    private nonisolated func fetchSimilarRelated(serverURL: String, authHeader: String) async -> [JFProgram] {
         guard !serverURL.isEmpty else { return [] }
         let targetId = program.itemId ?? program.id
         guard let base = URL(string: serverURL)?.appendingPathComponent("/Items/\(targetId)/Similar") else { return [] }
@@ -654,7 +658,7 @@ final class ProgramViewModel: ObservableObject {
         comps?.queryItems = q
         guard let url = comps?.url else { return [] }
         var req = URLRequest(url: url); req.httpMethod = "GET"
-        if !token.isEmpty { req.setValue(token, forHTTPHeaderField: "X-Emby-Token") }
+        if !authHeader.isEmpty { req.setValue(authHeader, forHTTPHeaderField: "Authorization") }
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return [] }
@@ -868,7 +872,7 @@ struct UpcomingProgramRow: View {
         guard !appState.serverURL.isEmpty,
               let url = URL(string: appState.serverURL)?.appendingPathComponent("/LiveTv/Channels/\(cid)") else { return }
         var req = URLRequest(url: url); req.httpMethod = "GET"
-        if !appState.accessToken.isEmpty { req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token") }
+        if !appState.accessToken.isEmpty { req.setValue(appState.getAuthorizationHeader(), forHTTPHeaderField: "Authorization") }
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return }
@@ -912,10 +916,17 @@ struct RelatedProgramCard: View {
                         switch phase {
                         case .empty: ZStack { Color(UIColor.secondarySystemBackground); ProgressView() }
                         case .success(let img):
-                            if isiPadOrMac || isMovie {
-                                img.resizable().scaledToFit().frame(width: imageWidth, height: imageHeight)
-                            } else {
-                                img.resizable().scaledToFill().frame(width: imageWidth, height: imageHeight).clipped()
+                            ZStack {
+                                // 1. Blurred background filling the box
+                                img.resizable().scaledToFill()
+                                    .frame(width: imageWidth, height: imageHeight)
+                                    .blur(radius: 15)
+                                    .opacity(0.6)
+                                    .clipped()
+                                
+                                // 2. The actual image fitted cleanly inside the box
+                                img.resizable().scaledToFit()
+                                    .frame(width: imageWidth, height: imageHeight)
                             }
                         case .failure: placeholder
                         @unknown default: placeholder
@@ -948,7 +959,7 @@ struct RelatedProgramCard: View {
         #endif
         comps?.queryItems = [
             URLQueryItem(name: "maxWidth", value: maxWidth),
-            URLQueryItem(name: "api_key", value: appState.apiKey)
+            URLQueryItem(name: "ApiKey", value: appState.apiKey)
         ]
         return comps?.url
     }
@@ -986,13 +997,17 @@ struct ProgramDetailImage: View {
                             .frame(width: geo.size.width, height: geo.size.height)
                             .background(Color(UIColor.secondarySystemBackground))
                     case .success(let img):
-                        if isiPadOrMac {
+                        ZStack {
+                            // 1. Massive blurred background for the main header poster
+                            img.resizable().scaledToFill()
+                                .frame(width: geo.size.width, height: geo.size.height)
+                                .blur(radius: 30)
+                                .opacity(0.6)
+                                .clipped()
+                            
+                            // 2. The crisp, perfectly fitted poster/thumbnail
                             img.resizable().scaledToFit()
                                 .frame(width: geo.size.width, height: geo.size.height)
-                                .background(Color(UIColor.secondarySystemBackground))
-                        } else {
-                            img.resizable().scaledToFill()
-                                .frame(width: geo.size.width, height: geo.size.height).clipped()
                         }
                     case .failure:
                         placeholder.frame(width: geo.size.width, height: geo.size.height)
@@ -1015,7 +1030,7 @@ struct ProgramDetailImage: View {
         var comps = URLComponents(string: base + "/Items/\(program.id)/Images/Primary")
         comps?.queryItems = [
             URLQueryItem(name: "maxWidth", value: String(maxWidth)),
-            URLQueryItem(name: "api_key", value: appState.apiKey),
+            URLQueryItem(name: "ApiKey", value: appState.apiKey),
             URLQueryItem(name: "t", value: String(Int(Date().timeIntervalSince1970))),
             URLQueryItem(name: "seed", value: String(refreshSeed))
         ]

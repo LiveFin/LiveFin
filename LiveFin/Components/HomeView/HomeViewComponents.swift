@@ -35,7 +35,6 @@ struct HorizontalProgramsRow: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: 8) {
-                // Using \.offset prevents SwiftUI from dropping duplicate items if there are ID collisions
                 ForEach(Array(programs.enumerated()), id: \.offset) { index, program in
                     NavigationLink(destination: ProgramView(program: program, appState: appState)
                         .environmentObject(appState)
@@ -48,7 +47,7 @@ struct HorizontalProgramsRow: View {
                 }
             }
             .padding(.horizontal)
-            .padding(.bottom, 12) // Adds breathing room inside the ScrollView so text isn't clipped
+            .padding(.bottom, 12)
         }
     }
 }
@@ -67,7 +66,6 @@ struct HorizontalChannelsRow: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .center, spacing: 10) {
-                // Using \.offset ensures all channels are shown even if elements share the same ID
                 ForEach(Array(channels.enumerated()), id: \.offset) { index, channel in
                     NavigationLink(destination: ChannelDetailView(channel: channel.asLiveDto(baseURL: appState.serverURL))) {
                         ZStack {
@@ -102,20 +100,49 @@ struct ProgramCard: View {
     @EnvironmentObject private var vm: HomeViewModel
 
     var body: some View {
+        let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
+
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .bottomLeading) {
-                ProgramImage(program: program)
+                Color(UIColor.secondarySystemBackground)
                     .frame(width: imageWidth, height: imageHeight)
-                    .background(Color(UIColor.secondarySystemBackground))
+                
+                if let url = URL(string: "\(base)/Items/\(program.id)/Images/Primary?maxWidth=400&ApiKey=\(appState.apiKey)") {
+                    CachedAsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            ZStack {
+                                // 1. Blurred background filling the box (prevents ugly empty spaces for portrait images)
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: imageWidth, height: imageHeight)
+                                    .blur(radius: 15)
+                                    .opacity(0.6)
+                                    .clipped()
+                                
+                                // 2. The actual image fitted cleanly inside the box
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: imageWidth, height: imageHeight)
+                            }
+                        case .failure, .empty:
+                            fallbackImage
+                        @unknown default:
+                            fallbackImage
+                        }
+                    }
+                    .frame(width: imageWidth, height: imageHeight)
+                } else {
+                    fallbackImage
+                }
                 
                 if let progress = progressRatio, progress > 0, progress < 1 {
                     ZStack(alignment: .leading) {
-                        // Explicitly set width of background track to prevent it from shrinking
                         Rectangle()
                             .fill(Color.black.opacity(0.35))
                             .frame(width: max(0, imageWidth - 12), height: 4)
-                        
-                        // Calculate width considering the 6pt padding on both sides (12 total)
                         Rectangle()
                             .fill(Color.white)
                             .frame(width: max(0, (imageWidth - 12) * progress), height: 4)
@@ -125,10 +152,9 @@ struct ProgramCard: View {
                 }
             }
             .frame(width: imageWidth, height: imageHeight)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous)) // Moved clipping to outer container
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .shadow(color: Color.black.opacity(0.12), radius: 4, x: 0, y: 2)
             
-            // Group text elements with tighter spacing
             VStack(alignment: .leading, spacing: 2) {
                 Text(program.name)
                     .font(.headline)
@@ -164,6 +190,23 @@ struct ProgramCard: View {
 
     private var imageWidth: CGFloat  { style == .portrait ? 120 : 220 }
     private var imageHeight: CGFloat { style == .portrait ? 180 : 124 }
+
+    @ViewBuilder
+    private var fallbackImage: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "tv")
+                .font(.system(size: style == .portrait ? 28 : 24))
+                .foregroundColor(.secondary)
+            Text(program.name)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .padding(.horizontal, 6)
+        }
+        .frame(width: imageWidth, height: imageHeight)
+        .background(Color(UIColor.secondarySystemBackground))
+    }
 
     private var programSubtitle: String? {
         let seasonEpisode: String? = {
@@ -226,11 +269,9 @@ struct HorizontalLibraryItemsRow: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: 8) {
-                // Guaranteed rendering for every item in the array using \.offset
                 ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                     if playDirectly {
                         Button {
-                            // Instantly build stream context for direct playback bypass
                             streamContext = StreamContext(playlist: [item], startIndex: 0)
                         } label: {
                             LibraryItemCard(item: item, style: style)
@@ -278,8 +319,9 @@ struct LibraryItemCard: View {
                 
                 Group {
                     if style == .landscape {
+                        // FIXED: Appended ApiKey parameter securely to all image URLs
                         if let backdropTag = item.backdropImageTag,
-                           let url = URL(string: "\(base)/Items/\(item.Id)/Images/Backdrop/0?tag=\(backdropTag)&maxWidth=400") {
+                           let url = URL(string: "\(base)/Items/\(item.Id)/Images/Backdrop/0?tag=\(backdropTag)&maxWidth=400&ApiKey=\(appState.apiKey)") {
                             CachedAsyncImage(url: url) { phase in
                                 switch phase {
                                 case .success(let image):
@@ -293,7 +335,7 @@ struct LibraryItemCard: View {
                                 }
                             }
                         } else if let primaryTag = item.primaryImageTag,
-                                  let url = URL(string: "\(base)/Items/\(item.Id)/Images/Primary?tag=\(primaryTag)&maxWidth=400") {
+                                  let url = URL(string: "\(base)/Items/\(item.Id)/Images/Primary?tag=\(primaryTag)&maxWidth=400&ApiKey=\(appState.apiKey)") {
                             CachedAsyncImage(url: url) { phase in
                                 switch phase {
                                 case .success(let image):
@@ -310,8 +352,9 @@ struct LibraryItemCard: View {
                             fallbackImage
                         }
                     } else {
+                        // FIXED: Appended ApiKey parameter securely to all image URLs
                         if let primaryTag = item.primaryImageTag,
-                           let url = URL(string: "\(base)/Items/\(item.Id)/Images/Primary?tag=\(primaryTag)&maxWidth=300") {
+                           let url = URL(string: "\(base)/Items/\(item.Id)/Images/Primary?tag=\(primaryTag)&maxWidth=300&ApiKey=\(appState.apiKey)") {
                             CachedAsyncImage(url: url) { phase in
                                 switch phase {
                                 case .success(let image):
@@ -333,7 +376,6 @@ struct LibraryItemCard: View {
                 
                 if let progress = progressRatio, progress > 0, progress < 1 {
                     ZStack(alignment: .leading) {
-                        // Explicit bounds to respect outer padding
                         Rectangle()
                             .fill(Color.black.opacity(0.35))
                             .frame(width: max(0, imageWidth - 12), height: 4)
