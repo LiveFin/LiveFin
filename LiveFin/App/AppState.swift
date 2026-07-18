@@ -118,6 +118,11 @@ final class AppState: ObservableObject {
     init() {
         // Register the interceptor instantly on boot to protect the SDK
         URLProtocol.registerClass(JellyfinV12Interceptor.self)
+        
+        // Prime the Watch connectivity instantly on boot
+#if canImport(WatchConnectivity)
+        _ = WatchSyncManager.shared
+#endif
     }
     
     // MARK: - Modern Jellyfin Authorization Header
@@ -853,7 +858,14 @@ extension AppState: @unchecked Sendable {}
 #if canImport(WatchConnectivity)
 final class WatchSyncManager: NSObject, WCSessionDelegate {
     static let shared = WatchSyncManager()
-    private override init() { super.init(); activate() }
+    
+    // Store context if we try to send before activation is complete
+    private var pendingContext: [String: Any]?
+
+    private override init() {
+        super.init()
+        activate()
+    }
 
     private func activate() {
         guard WCSession.isSupported() else { return }
@@ -871,15 +883,43 @@ final class WatchSyncManager: NSObject, WCSessionDelegate {
             "userId": userId,
             "loggedOut": false
         ]
-        do { try WCSession.default.updateApplicationContext(ctx) } catch { print("WatchSyncManager: updateApplicationContext error: \(error)") }
+        updateContextOrQueue(ctx)
     }
 
     func sendLogout() {
         guard WCSession.isSupported() else { return }
-        do { try WCSession.default.updateApplicationContext(["loggedOut": true]) } catch { }
+        updateContextOrQueue(["loggedOut": true])
     }
 
-    func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {}
+    private func updateContextOrQueue(_ ctx: [String: Any]) {
+        let session = WCSession.default
+        if session.activationState == .activated {
+            do {
+                try session.updateApplicationContext(ctx)
+            } catch {
+                print("WatchSyncManager: updateApplicationContext error: \(error)")
+            }
+        } else {
+            // Queue it up to be sent once activation completes
+            pendingContext = ctx
+            if session.activationState == .notActivated {
+                session.activate()
+            }
+        }
+    }
+
+    func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
+        // Send the queued context now that we are fully activated
+        if activationState == .activated, let ctx = pendingContext {
+            do {
+                try session.updateApplicationContext(ctx)
+                self.pendingContext = nil
+            } catch {
+                print("WatchSyncManager: pending updateApplicationContext error: \(error)")
+            }
+        }
+    }
+
 #if os(iOS)
     func sessionDidBecomeInactive(_ session: WCSession) {}
     func sessionDidDeactivate(_ session: WCSession) { WCSession.default.activate() }

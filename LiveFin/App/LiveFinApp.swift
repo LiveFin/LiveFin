@@ -1,5 +1,6 @@
 import SwiftUI
 import BackgroundTasks
+import UserNotifications
 
 @main
 struct LiveFinApp: App {
@@ -12,6 +13,11 @@ struct LiveFinApp: App {
     private static var bgRegistered = false
 
     @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        // Register the singleton so the OS knows to route notification clicks here
+        UNUserNotificationCenter.current().delegate = NotificationManager.shared
+    }
 
     var body: some Scene {
         WindowGroup {

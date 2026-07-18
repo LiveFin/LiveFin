@@ -434,9 +434,15 @@ struct LoginView: View {
         }
         
         var request = URLRequest(url: url)
-        request.httpMethod = "GET"
+        // FIX: Jellyfin v12 requires a POST request to initiate Quick Connect, not a GET request.
+        request.httpMethod = "POST"
+        // FIX: Provide a Content-Length to avoid server hangups on an empty body.
+        request.setValue("0", forHTTPHeaderField: "Content-Length")
         
-        let authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"\(appState.clientDevice)\", DeviceId=\"\(appState.deviceId)\", Version=\"\(appState.clientVersion)\""
+        // FIX: Fallback to UUID if appState.deviceId happens to be empty to prevent v12 from crashing with System.ArgumentNullException.
+        let safeDeviceId = appState.deviceId.isEmpty ? UUID().uuidString : appState.deviceId
+        
+        let authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"\(appState.clientDevice)\", DeviceId=\"\(safeDeviceId)\", Version=\"\(appState.clientVersion)\""
         request.setValue(authHeader, forHTTPHeaderField: "Authorization")
         
         Task {
@@ -499,7 +505,10 @@ struct LoginView: View {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        let authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"\(appState.clientDevice)\", DeviceId=\"\(appState.deviceId)\", Version=\"\(appState.clientVersion)\""
+        // Match the safe DeviceId usage
+        let safeDeviceId = appState.deviceId.isEmpty ? UUID().uuidString : appState.deviceId
+        
+        let authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"\(appState.clientDevice)\", DeviceId=\"\(safeDeviceId)\", Version=\"\(appState.clientVersion)\""
         request.setValue(authHeader, forHTTPHeaderField: "Authorization")
         
         let body = ["Secret": secret]
@@ -601,9 +610,23 @@ struct LoginView: View {
     private func normalizeURL(_ urlString: String) -> String {
         var str = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         if str.isEmpty { return "" }
-        if !str.lowercased().hasPrefix("http://") && !str.lowercased().hasPrefix("https://") {
-            str = "http://" + str
+        
+        let lower = str.lowercased()
+        if !lower.hasPrefix("http://") && !lower.hasPrefix("https://") {
+            // Smart check for local IPs and local hostnames
+            let isIPv4 = lower.range(of: "^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}(:[0-9]+)?$", options: .regularExpression) != nil
+            let isIPv6 = lower.hasPrefix("[")
+            let isLocal = lower.hasPrefix("localhost") || lower.contains(".local")
+            
+            // If it looks like a local/private network server, default to http://
+            // For everything else (e.g. valid external domains), default to https://
+            if isIPv4 || isIPv6 || isLocal {
+                str = "http://" + str
+            } else {
+                str = "https://" + str
+            }
         }
+        
         while str.hasSuffix("/") {
             str.removeLast()
         }

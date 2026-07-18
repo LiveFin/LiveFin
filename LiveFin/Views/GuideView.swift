@@ -2,8 +2,6 @@
 //  GuideView.swift
 //  LiveFin
 //
-//
-//
 
 import SwiftUI
 import Foundation
@@ -13,13 +11,15 @@ import UIKit
 #endif
 
 // Timeline layout constants
-private let pxPerMinute: CGFloat = 8 // 30min intervals => ~240px per hour
-private let channelLabelWidth: CGFloat = 120
+private let pxPerMinute: CGFloat = 6
+private let channelLabelWidth: CGFloat = 86
 private let rowHeight: CGFloat = 72
 private let headerHeight: CGFloat = 28
+
 // Caching TTLs (in seconds)
-private let channelsCacheTTL: TimeInterval = 3600 // Reduced from 24h to 1h
+private let channelsCacheTTL: TimeInterval = 3600 // 1h
 private let epgCacheTTL: TimeInterval = 30 * 60
+
 // Cache pruning horizon (in days)
 private let epgKeepDays: Int = 14
 
@@ -27,21 +27,15 @@ private let epgKeepDays: Int = 14
 private func startOfDay(_ date: Date) -> Date { Calendar.current.startOfDay(for: date) }
 private func endOfDay(_ date: Date) -> Date { Calendar.current.date(byAdding: .day, value: 1, to: startOfDay(date)) ?? date.addingTimeInterval(24*3600) }
 
-// MARK: - Local response wrappers (unique names to avoid collisions)
 private struct LiveTvChannelsResponse: Codable { let items: [LiveTvChannelDto]?; enum CodingKeys: String, CodingKey { case items = "Items" } }
 private struct EPGProgramsResponse: Codable { let items: [BaseItemDto]?; enum CodingKeys: String, CodingKey { case items = "Items" } }
 
-// NOTE: Compact channel header and program row views were moved to:
-//   LiveFin/Components/Guide View/GuideViewComponents.swift
-// See that file for `GuideChannelHeader`, `GuideProgramRow`, and `RenderBlock`.
-
-// Cache folder and filename constants used by the Guide caching helpers
+// Cache definitions
 private let guideCacheFolder = "GuideCache"
 private let epgFilePrefix = "epg_day_"
 private let epgFileExt = ".json"
 private let channelsCacheFile = "channels.json"
 
-// Prefetch helpers to warm channel logo cache for Guide (UIKit only)
 #if canImport(UIKit)
 private func guideBuildChannelLogoURL(baseURL: String, apiKey: String, channelId: String) -> URL? {
     let trimmed = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -83,7 +77,6 @@ private let dayFileFormatter: DateFormatter = {
 private func dayKey(from date: Date) -> String { dayFileFormatter.string(from: startOfDay(date)) }
 private func dateFromDayKey(_ key: String) -> Date? { dayFileFormatter.date(from: key) }
 
-// Shared ISO8601 formatters — reused across all EPG fetches and program block builds
 private let iso8601WithFractional: ISO8601DateFormatter = {
     let f = ISO8601DateFormatter()
     f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -96,14 +89,12 @@ private let iso8601InternetDateTime: ISO8601DateFormatter = {
     return f
 }()
 
-// Cached formatter for hour tick labels
 private let hourTickFormatter: DateFormatter = {
     let f = DateFormatter()
     f.dateFormat = "HH:mm"
     return f
 }()
 
-// Cached formatter for day chip labels
 private let dayLabelFormatter: DateFormatter = {
     let f = DateFormatter()
     f.dateStyle = .medium
@@ -121,14 +112,8 @@ private func formatDayLabel(_ d: Date) -> String {
 private struct ChannelCacheFile: Codable { let timestamp: Date; let items: [LiveTvChannelDto] }
 private struct EPGCacheFile: Codable { let dayKey: String; let timestamp: Date; let items: [BaseItemDto] }
 
-// MARK: - Pure EPG layout helpers (free functions; safe to call from any thread)
-
-private func epgClampedRange(
-    for item: BaseItemDto,
-    baseStart: Date,
-    dayEnd: Date,
-    grouped: [String: [BaseItemDto]]
-) -> (Date, Date) {
+// MARK: - Pure EPG layout helpers
+private func epgClampedRange(for item: BaseItemDto, baseStart: Date, dayEnd: Date, grouped: [String: [BaseItemDto]]) -> (Date, Date) {
     let s0 = item.startDate ?? baseStart
     let inferredEnd: Date = {
         if let ed = item.endDate { return ed }
@@ -140,30 +125,16 @@ private func epgClampedRange(
         return Calendar.current.date(byAdding: .minute, value: 30, to: s0) ?? s0.addingTimeInterval(1800)
     }()
     
-    if inferredEnd <= baseStart {
-        return (baseStart, baseStart)
-    }
-    if s0 >= dayEnd {
-        return (dayEnd, dayEnd)
-    }
+    if inferredEnd <= baseStart { return (baseStart, baseStart) }
+    if s0 >= dayEnd { return (dayEnd, dayEnd) }
     
     let s = max(s0, baseStart)
     let e = min(inferredEnd, dayEnd)
     return (s, max(s, e))
 }
 
-private func epgStabilizeItems(
-    _ items: [BaseItemDto],
-    baseStart: Date,
-    dayEnd: Date,
-    grouped: [String: [BaseItemDto]]
-) -> [BaseItemDto] {
-    struct Candidate {
-        let item: BaseItemDto
-        let s: Date
-        let e: Date
-        let duration: TimeInterval
-    }
+private func epgStabilizeItems(_ items: [BaseItemDto], baseStart: Date, dayEnd: Date, grouped: [String: [BaseItemDto]]) -> [BaseItemDto] {
+    struct Candidate { let item: BaseItemDto; let s: Date; let e: Date; let duration: TimeInterval }
     
     let candidates: [Candidate] = items.compactMap { item in
         let (s, e) = epgClampedRange(for: item, baseStart: baseStart, dayEnd: dayEnd, grouped: grouped)
@@ -172,9 +143,7 @@ private func epgStabilizeItems(
     }
     
     let sorted = candidates.sorted {
-        if abs($0.s.timeIntervalSince($1.s)) < 120 {
-            return $0.duration > $1.duration
-        }
+        if abs($0.s.timeIntervalSince($1.s)) < 120 { return $0.duration > $1.duration }
         return $0.s < $1.s
     }
     
@@ -182,25 +151,14 @@ private func epgStabilizeItems(
     for cur in sorted {
         var isDuplicateStart = false
         if let last = out.last {
-            if abs(cur.s.timeIntervalSince(last.s)) < 120 {
-                isDuplicateStart = true
-            }
+            if abs(cur.s.timeIntervalSince(last.s)) < 120 { isDuplicateStart = true }
         }
-        if !isDuplicateStart {
-            out.append(cur)
-        }
+        if !isDuplicateStart { out.append(cur) }
     }
     return out.map { $0.item }
 }
 
-private func epgComputeRenderBlocks(
-    _ items: [BaseItemDto],
-    channelId: String,
-    baseStart: Date,
-    dayEnd: Date,
-    visibleWidth: CGFloat,
-    grouped: [String: [BaseItemDto]]
-) -> [RenderBlock] {
+private func epgComputeRenderBlocks(_ items: [BaseItemDto], channelId: String, baseStart: Date, dayEnd: Date, visibleWidth: CGFloat, grouped: [String: [BaseItemDto]]) -> [RenderBlock] {
     struct Pre { let key: String; let item: BaseItemDto; let s: Date; let e: Date; let x: CGFloat; let w: CGFloat }
     
     let pres: [Pre] = items.compactMap { it in
@@ -220,16 +178,11 @@ private func epgComputeRenderBlocks(
     
     for (idx, cur) in sortedPres.enumerated() {
         var finalW = cur.w
-        
         if idx + 1 < sortedPres.count {
             let nextX = sortedPres[idx + 1].x
-            if nextX > cur.x {
-                finalW = min(finalW, nextX - cur.x)
-            }
+            if nextX > cur.x { finalW = min(finalW, nextX - cur.x) }
         }
-        
         finalW -= gap
-        
         if finalW >= minDrawWidth {
             out.append(RenderBlock(id: cur.key, item: cur.item, s: cur.s, e: cur.e, x: cur.x, w: finalW))
         }
@@ -245,6 +198,10 @@ private func channelNumericComponents(_ number: String?) -> [Int] {
 }
 
 private nonisolated func channelLessThan(_ a: LiveTvChannelDto, _ b: LiveTvChannelDto) -> Bool {
+    let aFav = a.userData?.isFavorite == true
+    let bFav = b.userData?.isFavorite == true
+    if aFav != bFav { return aFav }
+    
     let aNum = a.number ?? ""; let bNum = b.number ?? ""
     let aHas = !aNum.isEmpty; let bHas = !bNum.isEmpty
     if aHas != bHas { return aHas }
@@ -253,27 +210,340 @@ private nonisolated func channelLessThan(_ a: LiveTvChannelDto, _ b: LiveTvChann
     return (a.name ?? "") < (b.name ?? "")
 }
 
+// MARK: - App-Wide Cache Manager
+@MainActor
+class GuideViewModel: ObservableObject {
+    static let shared = GuideViewModel()
+    
+    @Published var channels: [LiveTvChannelDto] = []
+    @Published var sortedChannels: [LiveTvChannelDto] = []
+    
+    @Published var groupedPrograms: [Date: [String: [BaseItemDto]]] = [:]
+    @Published var renderBlocks: [Date: [String: [RenderBlock]]] = [:]
+    
+    @Published var isLoading: Bool = false
+    @Published var isRefreshing: Bool = false
+    @Published var errorMessage: String?
+    
+    private var hasLoadedChannels = false
+    private var fetchingDays: Set<Date> = []
+    private var collapseTasks: [Date: Task<[String: [RenderBlock]], Never>] = [:]
+    
+    private init() {}
+    
+    func start(appState: AppState, baseStart: Date, visibleWidth: CGFloat) async {
+        // Step 1: Instantly load from cache
+        if !hasLoadedChannels {
+            hasLoadedChannels = await loadChannelsFromCache()
+        }
+        
+        let today = startOfDay(Date())
+        if groupedPrograms[today] == nil {
+            _ = await loadProgramsFromCache(for: today)
+        }
+        
+        // Immediately render UI from cached data
+        await scheduleCollapsePrograms(for: today, baseStart: baseStart, visibleWidth: visibleWidth)
+        
+        // Step 2: Background refresh data
+        Task.detached {
+            await self.loadChannels(appState: appState)
+            
+            if !self.epgCacheIsFresh(for: today) {
+                await self.fetchEPG(for: today, appState: appState, updateUI: false)
+                await self.scheduleCollapsePrograms(for: today, baseStart: baseStart, visibleWidth: visibleWidth)
+            }
+            
+            await self.prefetchAdjacentDays(around: today, appState: appState)
+            self.pruneOldEPGCacheFiles()
+        }
+    }
+    
+    func switchDay(_ day: Date, appState: AppState, visibleWidth: CGFloat, baseStart: Date) async {
+        if groupedPrograms[day] == nil {
+            _ = await loadProgramsFromCache(for: day)
+        }
+        
+        if renderBlocks[day] == nil {
+            await scheduleCollapsePrograms(for: day, baseStart: baseStart, visibleWidth: visibleWidth)
+        }
+        
+        if !epgCacheIsFresh(for: day) {
+            Task {
+                await fetchEPG(for: day, appState: appState, updateUI: false)
+                await scheduleCollapsePrograms(for: day, baseStart: baseStart, visibleWidth: visibleWidth)
+            }
+        }
+        Task { await prefetchAdjacentDays(around: day, appState: appState) }
+    }
+    
+    func manualRefresh(appState: AppState, currentDay: Date, baseStart: Date, visibleWidth: CGFloat) async {
+        isRefreshing = true
+        try? FileManager.default.removeItem(at: channelsCacheURL())
+        if let url = try? epgCacheFileURL(for: currentDay) {
+            try? FileManager.default.removeItem(at: url)
+        }
+        
+        groupedPrograms[currentDay] = nil
+        renderBlocks[currentDay] = nil
+        
+        async let c: () = loadChannels(appState: appState)
+        async let e: () = fetchEPG(for: currentDay, appState: appState, updateUI: true)
+        _ = await (c, e)
+        
+        await scheduleCollapsePrograms(for: currentDay, baseStart: baseStart, visibleWidth: visibleWidth)
+        isRefreshing = false
+    }
+    
+    func scheduleCollapsePrograms(for day: Date, baseStart: Date, visibleWidth: CGFloat) async {
+        collapseTasks[day]?.cancel()
+        
+        let channelsSnapshot = self.sortedChannels
+        let groupedSnapshot = self.groupedPrograms[day] ?? [:]
+        let dayEnd = endOfDay(day)
+        
+        let task = Task.detached(priority: .userInitiated) {
+            var newBlocks: [String: [RenderBlock]] = [:]
+            for ch in channelsSnapshot {
+                let items = groupedSnapshot[ch.id] ?? []
+                if items.isEmpty { continue }
+                let collapsed = epgStabilizeItems(items, baseStart: baseStart, dayEnd: dayEnd, grouped: groupedSnapshot)
+                newBlocks[ch.id] = epgComputeRenderBlocks(
+                    collapsed, channelId: ch.id, baseStart: baseStart, dayEnd: dayEnd,
+                    visibleWidth: visibleWidth, grouped: groupedSnapshot)
+            }
+            return newBlocks
+        }
+        
+        collapseTasks[day] = task
+        let result = await task.value
+        
+        if !task.isCancelled {
+            self.renderBlocks[day] = result
+        }
+    }
+
+    func fetchEPG(for day: Date, appState: AppState, updateUI: Bool) async {
+        guard let client = appState.client, !appState.accessToken.isEmpty else { return }
+        if updateUI && groupedPrograms[day] == nil { isLoading = true }
+        errorMessage = nil
+        
+        do {
+            let start = startOfDay(day)
+            let end = endOfDay(day)
+            
+            let programBase = client.configuration.url.appendingPathComponent("/LiveTv/Programs")
+            var comps = URLComponents(url: programBase, resolvingAgainstBaseURL: false)
+            comps?.queryItems = [
+                URLQueryItem(name: "startDate", value: iso8601Basic.string(from: start)),
+                URLQueryItem(name: "endDate", value: iso8601Basic.string(from: end)),
+                URLQueryItem(name: "EnableImages", value: "false"),
+                URLQueryItem(name: "EnableUserData", value: "true"),
+                URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,ParentIndexNumber,IndexNumber,IsRepeat,IsMovie,ImageTags,ChannelId,ProgramId,TimerId,SeriesTimerId,SeriesId,IsSeries")
+            ]
+            if !appState.userID.isEmpty { comps?.queryItems?.append(URLQueryItem(name: "userId", value: appState.userID)) }
+            guard let final = comps?.url else { return }
+            
+            var req = URLRequest(url: final)
+            req.httpMethod = "GET"
+            req.cachePolicy = .reloadIgnoringLocalCacheData
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            
+            // Standard Authorization header (Jellyfin v12+ compatible)
+            req.setValue("MediaBrowser Token=\"\(appState.accessToken)\"", forHTTPHeaderField: "Authorization")
+
+            let dec = JSONDecoder()
+            dec.dateDecodingStrategy = .custom { d in
+                let c = try d.singleValueContainer(); let s = try c.decode(String.self)
+                if let dt = iso8601WithFractional.date(from: s) { return dt }
+                if let dt2 = iso8601Basic.date(from: s) { return dt2 }
+                throw DecodingError.dataCorruptedError(in: c, debugDescription: "Cannot parse date: \(s)")
+            }
+
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+                throw NSError(domain: "", code: 0, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch EPG"])
+            }
+            
+            let decoded = try await Task.detached(priority: .userInitiated) {
+                return try dec.decode(EPGProgramsResponse.self, from: data)
+            }.value
+
+            let items = decoded.items ?? []
+            let newGrouped = await backgroundProcessAndGroup(programs: items, for: day)
+            
+            self.groupedPrograms[day] = newGrouped
+            try? saveEPGToCache(for: day, items: items)
+            
+        } catch {
+            if updateUI { self.errorMessage = error.localizedDescription }
+        }
+        if updateUI { isLoading = false }
+    }
+
+    private func loadChannels(appState: AppState) async {
+        guard let client = appState.client, !appState.accessToken.isEmpty else { return }
+        do {
+            var urlComponents = URLComponents(url: client.configuration.url.appendingPathComponent("/LiveTv/Channels"), resolvingAgainstBaseURL: false)
+            urlComponents?.queryItems = [
+                URLQueryItem(name: "EnableUserData", value: "true"),
+                URLQueryItem(name: "userId", value: appState.userID)
+            ]
+            guard let finalUrl = urlComponents?.url else { return }
+            var req = URLRequest(url: finalUrl)
+            req.httpMethod = "GET"
+            req.cachePolicy = .reloadIgnoringLocalCacheData
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            
+            // Standard Authorization header
+            req.setValue("MediaBrowser Token=\"\(appState.accessToken)\"", forHTTPHeaderField: "Authorization")
+            
+            let (data, _) = try await URLSession.shared.data(for: req)
+            let decoded = try JSONDecoder().decode(LiveTvChannelsResponse.self, from: data)
+            let rawList = decoded.items ?? []
+            let list = await Task.detached(priority: .userInitiated) { rawList.sorted(by: channelLessThan) }.value
+            
+            self.channels = list
+            self.sortedChannels = list
+            try? saveChannelsToCache(list)
+            #if canImport(UIKit)
+            guidePrefetchChannelLogos(list, baseURL: appState.serverURL, apiKey: appState.apiKey)
+            #endif
+        } catch {
+            self.errorMessage = error.localizedDescription
+        }
+    }
+
+    private func loadChannelsFromCache() async -> Bool {
+        do {
+            let url = try channelsCacheURL()
+            let list = try await Task.detached(priority: .utility) {
+                let data = try Data(contentsOf: url)
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let decoded = try decoder.decode(ChannelCacheFile.self, from: data)
+                return decoded.items.sorted(by: channelLessThan)
+            }.value
+            self.channels = list
+            self.sortedChannels = list
+            return true
+        } catch { return false }
+    }
+
+    private func loadProgramsFromCache(for day: Date) async -> Bool {
+        do {
+            let key = dayKey(from: day)
+            let url = try epgCacheURL(forDayKey: key)
+            let decoded = try await Task.detached(priority: .userInitiated) {
+                let data = try Data(contentsOf: url)
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                return try decoder.decode(EPGCacheFile.self, from: data)
+            }.value
+            
+            let grouped = await backgroundProcessAndGroup(programs: decoded.items, for: day)
+            self.groupedPrograms[day] = grouped
+            return true
+        } catch { return false }
+    }
+
+    private func backgroundProcessAndGroup(programs: [BaseItemDto], for day: Date) async -> [String: [BaseItemDto]] {
+        let start = startOfDay(day); let end = endOfDay(day)
+        return await Task.detached(priority: .userInitiated) {
+            let filtered = programs.filter { p in
+                let s0 = p.startDate ?? start
+                let defaultEnd = Calendar.current.date(byAdding: .minute, value: 30, to: s0) ?? s0.addingTimeInterval(30 * 60)
+                let s = max(s0, start); let e = min(p.endDate ?? defaultEnd, end)
+                return e > start && s < end
+            }
+            var grouped = Dictionary(grouping: filtered, by: { $0.channelId ?? "" })
+            for (k, v) in grouped {
+                grouped[k] = v.sorted { ($0.startDate ?? start) < ($1.startDate ?? start) }
+            }
+            return grouped
+        }.value
+    }
+
+    private func prefetchAdjacentDays(around day: Date, appState: AppState) async {
+        let cal = Calendar.current
+        let offsets = [-1, 1, 2]
+        
+        var daysToFetch: [Date] = []
+        for off in offsets {
+            if let d = cal.date(byAdding: .day, value: off, to: day) {
+                let sd = startOfDay(d)
+                if !epgCacheIsFresh(for: d) && !fetchingDays.contains(sd) {
+                    fetchingDays.insert(sd)
+                    daysToFetch.append(d)
+                }
+            }
+        }
+        
+        await withTaskGroup(of: Void.self) { group in
+            for d in daysToFetch {
+                group.addTask {
+                    await self.fetchEPG(for: d, appState: appState, updateUI: false)
+                    await MainActor.run {
+                        self.fetchingDays.remove(startOfDay(d))
+                    }
+                }
+            }
+        }
+    }
+
+    nonisolated private func saveChannelsToCache(_ items: [LiveTvChannelDto]) throws {
+        let payload = ChannelCacheFile(timestamp: Date(), items: items)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(payload)
+        try data.write(to: try channelsCacheURL(), options: [.atomic])
+    }
+
+    nonisolated private func saveEPGToCache(for day: Date, items: [BaseItemDto]) throws {
+        let payload = EPGCacheFile(dayKey: dayKey(from: day), timestamp: Date(), items: items)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(payload)
+        let url = try epgCacheURL(forDayKey: payload.dayKey)
+        Task.detached(priority: .utility) { try? data.write(to: url, options: [.atomic]) }
+    }
+    
+    nonisolated private func epgCacheIsFresh(for day: Date) -> Bool {
+        guard let url = try? epgCacheURL(forDayKey: dayKey(from: day)),
+              let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let modified = attrs[.modificationDate] as? Date else { return false }
+        return Date().timeIntervalSince(modified) < epgCacheTTL
+    }
+    
+    nonisolated private func pruneOldEPGCacheFiles() {
+        do {
+            let dir = try guideCacheDirectory()
+            let fm = FileManager.default
+            let files = try fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+            let horizon = startOfDay(Date())
+            for url in files where url.lastPathComponent.hasPrefix(epgFilePrefix) && url.pathExtension == "json" {
+                let name = url.deletingPathExtension().lastPathComponent
+                let key = String(name.dropFirst(epgFilePrefix.count))
+                if let d = dateFromDayKey(key), startOfDay(d) < horizon {
+                    try? fm.removeItem(at: url)
+                }
+            }
+        } catch { }
+    }
+    
+    nonisolated func epgCacheFileURL(for day: Date) throws -> URL {
+        return try epgCacheURL(forDayKey: dayKey(from: day))
+    }
+}
+
+
 // MARK: - Main Guide View
 struct GuideView: View {
     @EnvironmentObject var appState: AppState
+    @StateObject private var vm = GuideViewModel.shared
 
-    @State private var channels: [LiveTvChannelDto] = []
-    @State private var sortedChannels: [LiveTvChannelDto] = []
-    @State private var programs: [BaseItemDto] = []
-    @State private var groupedProgramsCache: [String: [BaseItemDto]] = [:]
-
-    @State private var selectedDay: Date = Date()
-    @State private var isLoading: Bool = false
-    @State private var isRefreshing: Bool = false
-    @State private var errorMessage: String?
+    @State private var selectedDay: Date = startOfDay(Date())
     @State private var nowTick: Date = Date()
-    @State private var fetchingDays: Set<Date> = []
-
-    @State private var collapsedProgramsByChannel: [String: [BaseItemDto]] = [:]
-    @State private var cachedRenderBlocksByChannel: [String: [RenderBlock]] = [:]
-    @State private var collapseTask: Task<Void, Never>? = nil
-    @State private var selectionDebounceTask: Task<Void, Never>? = nil
-
     @State private var cachedHourBoundaries: [Date] = []
     @State private var cachedHourBoundariesKey: Date = .distantPast
 
@@ -283,13 +553,9 @@ struct GuideView: View {
         return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: today) }
     }
 
-    private var groupedByChannel: [String: [BaseItemDto]] { groupedProgramsCache }
-    private func normDay(_ d: Date) -> Date { startOfDay(d) }
-    private var isToday: Bool { Calendar.current.isDateInToday(selectedDay) }
-    
-    private func computeBaseStart(for time: Date) -> Date {
-        let day = startOfDay(selectedDay)
-        guard isToday else { return day }
+    private func computeBaseStart(for time: Date, day: Date) -> Date {
+        let startD = startOfDay(day)
+        guard Calendar.current.isDateInToday(day) else { return startD }
         let cal = Calendar.current
         let comps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: time)
         
@@ -303,15 +569,15 @@ struct GuideView: View {
         newComps.nanosecond = 0
         
         let aligned = cal.date(from: newComps) ?? time
-        return max(day, aligned)
+        return max(startD, aligned)
     }
     
-    private var baseStart: Date { computeBaseStart(for: nowTick) }
+    private var baseStart: Date { computeBaseStart(for: nowTick, day: selectedDay) }
     private var visibleMinutes: Double { endOfDay(selectedDay).timeIntervalSince(baseStart) / 60.0 }
     private var visibleWidth: CGFloat { CGFloat(visibleMinutes) * pxPerMinute }
     
     private var nowX: CGFloat? {
-        guard isToday else { return nil }
+        guard Calendar.current.isDateInToday(selectedDay) else { return nil }
         let now = nowTick
         if now <= baseStart || now >= endOfDay(selectedDay) { return nil }
         let mins = now.timeIntervalSince(baseStart) / 60.0
@@ -321,9 +587,9 @@ struct GuideView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if isLoading && channels.isEmpty {
+                if vm.isLoading && vm.channels.isEmpty {
                     ProgressView("Loading Guide…").frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let msg = errorMessage {
+                } else if let msg = vm.errorMessage {
                     VStack(spacing: 16) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 48))
@@ -340,7 +606,10 @@ struct GuideView: View {
                         }
                         
                         Button {
-                            Task { await reloadAll() }
+                            Task {
+                                await vm.start(appState: appState, baseStart: baseStart, visibleWidth: visibleWidth)
+                                await vm.switchDay(selectedDay, appState: appState, visibleWidth: visibleWidth, baseStart: baseStart)
+                            }
                         } label: {
                             Text("Try Again")
                                 .fontWeight(.semibold)
@@ -353,7 +622,7 @@ struct GuideView: View {
                         .padding(.top, 8)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if channels.isEmpty {
+                } else if vm.channels.isEmpty {
                     Text("No channels available").foregroundColor(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     VStack(spacing: 0) {
@@ -384,7 +653,7 @@ struct GuideView: View {
                                                 }
                                             }
                                             .buttonStyle(.plain)
-                                            .id(normDay(day))
+                                            .id(startOfDay(day))
                                         }
                                     }
                                     .padding(.horizontal)
@@ -392,37 +661,33 @@ struct GuideView: View {
                                 }
                                 .onChange(of: selectedDay) { _, new in
                                     withAnimation(.easeInOut) {
-                                        proxy.scrollTo(normDay(new), anchor: .center)
+                                        proxy.scrollTo(startOfDay(new), anchor: .center)
+                                    }
+                                    Task {
+                                        let newBaseStart = computeBaseStart(for: nowTick, day: new)
+                                        let vWidth = CGFloat(endOfDay(new).timeIntervalSince(newBaseStart) / 60.0) * pxPerMinute
+                                        await vm.switchDay(new, appState: appState, visibleWidth: vWidth, baseStart: newBaseStart)
                                     }
                                 }
                             }
                             HStack(spacing: 4) {
-                                if #available(iOS 26.0, *) {
-                                    Button { Task { await handleManualRefresh() } } label: {
-                                        if isRefreshing {
-                                            ProgressView().controlSize(.small).frame(width: 36, height: 36)
-                                        } else {
-                                            Image(systemName: "arrow.clockwise")
-                                                .font(.system(size: 16, weight: .medium))
-                                                .frame(width: 36, height: 36)
-                                                .contentShape(Rectangle())
-                                        }
+                                Button {
+                                    Task {
+                                        let bStart = computeBaseStart(for: nowTick, day: selectedDay)
+                                        let vWidth = CGFloat(endOfDay(selectedDay).timeIntervalSince(bStart) / 60.0) * pxPerMinute
+                                        await vm.manualRefresh(appState: appState, currentDay: selectedDay, baseStart: bStart, visibleWidth: vWidth)
                                     }
-                                    .buttonStyle(.plain)
-                                    .glassEffect(.regular.interactive())
-                                } else {
-                                    Button { Task { await handleManualRefresh() } } label: {
-                                        if isRefreshing {
-                                            ProgressView().controlSize(.small).frame(width: 44, height: 44)
-                                        } else {
-                                            Image(systemName: "arrow.clockwise")
-                                                .font(.system(size: 16, weight: .medium))
-                                                .frame(width: 44, height: 44)
-                                                .contentShape(Rectangle())
-                                        }
+                                } label: {
+                                    if vm.isRefreshing {
+                                        ProgressView().controlSize(.small).frame(width: 36, height: 36)
+                                    } else {
+                                        Image(systemName: "arrow.clockwise")
+                                            .font(.system(size: 16, weight: .medium))
+                                            .frame(width: 36, height: 36)
+                                            .contentShape(Rectangle())
                                     }
-                                    .buttonStyle(.plain)
                                 }
+                                .buttonStyle(.plain)
                             }
                             .padding(.trailing, 8)
                         }
@@ -433,7 +698,7 @@ struct GuideView: View {
                                 VStack(spacing: 0) {
                                     Color.clear.frame(height: headerHeight)
                                     LazyVStack(spacing: 0) {
-                                        ForEach(sortedChannels, id: \.id) { ch in
+                                        ForEach(vm.sortedChannels, id: \.id) { ch in
                                             NavigationLink(
                                                 destination: ChannelDetailView(channel: ch)
                                                     .environmentObject(appState)
@@ -456,17 +721,8 @@ struct GuideView: View {
                                             .background(Color(.systemBackground))
                                         Divider()
                                         LazyVStack(spacing: 0) {
-                                            ForEach(sortedChannels, id: \.id) { ch in
-                                                let items = groupedByChannel[ch.id] ?? []
-                                                
-                                                let stabilized: [BaseItemDto] = collapsedProgramsByChannel[ch.id] ?? epgStabilizeItems(
-                                                    items, baseStart: self.baseStart, dayEnd: endOfDay(self.selectedDay), grouped: groupedByChannel
-                                                )
-
-                                                let blocks: [RenderBlock] = cachedRenderBlocksByChannel[ch.id] ?? epgComputeRenderBlocks(
-                                                    stabilized, channelId: ch.id, baseStart: self.baseStart, dayEnd: endOfDay(self.selectedDay),
-                                                    visibleWidth: visibleWidth, grouped: groupedByChannel
-                                                )
+                                            ForEach(vm.sortedChannels, id: \.id) { ch in
+                                                let blocks = vm.renderBlocks[selectedDay]?[ch.id] ?? []
                                                 
                                                 ZStack(alignment: .topLeading) {
                                                     Color.clear.frame(width: visibleWidth, height: rowHeight)
@@ -490,7 +746,6 @@ struct GuideView: View {
                                                 .clipped()
                                             }
                                         }
-                                        .animation(nil, value: programs.count)
                                     }
                                 }
                             }
@@ -500,44 +755,26 @@ struct GuideView: View {
             }
             .navigationTitle("Guide")
             .task {
-                await reloadAll()
-            }
-            .onChange(of: selectedDay) {
-                let targetDay = selectedDay
-                selectionDebounceTask?.cancel()
-
-                cachedRenderBlocksByChannel = [:]
-                collapsedProgramsByChannel = [:]
-                groupedProgramsCache = [:]
-
-                selectionDebounceTask = Task {
-                    let loaded = await loadProgramsFromCache(for: targetDay)
-                    if Task.isCancelled { return }
-                    
-                    if !loaded || !epgCacheIsFresh(for: targetDay) {
-                        await fetchEPG(for: targetDay, updateUI: true)
-                    } else {
-                        await backgroundProcessAndGroup(programs: self.programs, for: targetDay)
-                    }
-                    if Task.isCancelled { return }
-                    
-                    await prefetchAdjacentDays(around: targetDay)
-                }
+                await vm.start(appState: appState, baseStart: baseStart, visibleWidth: visibleWidth)
+                await vm.switchDay(selectedDay, appState: appState, visibleWidth: visibleWidth, baseStart: baseStart)
             }
             .onReceive(Timer.publish(every: 10, on: .main, in: .common).autoconnect()) { now in
-                let oldBaseStart = self.baseStart
+                let oldBaseStart = computeBaseStart(for: self.nowTick, day: self.selectedDay)
                 self.nowTick = now
-                let newBaseStart = self.computeBaseStart(for: now)
+                let newBaseStart = computeBaseStart(for: now, day: self.selectedDay)
                 
                 if newBaseStart != oldBaseStart {
-                    self.cachedRenderBlocksByChannel = [:]
-                    Task { scheduleCollapsePrograms(for: self.selectedDay) }
+                    if Calendar.current.isDateInToday(self.selectedDay) {
+                        let newVisibleWidth = CGFloat(endOfDay(self.selectedDay).timeIntervalSince(newBaseStart) / 60.0) * pxPerMinute
+                        Task {
+                            await vm.scheduleCollapsePrograms(for: self.selectedDay, baseStart: newBaseStart, visibleWidth: newVisibleWidth)
+                        }
+                    }
                 }
             }
             #if canImport(UIKit)
             .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
-                self.cachedRenderBlocksByChannel = [:]
-                Task { scheduleCollapsePrograms(for: self.selectedDay) }
+                Task { await vm.scheduleCollapsePrograms(for: self.selectedDay, baseStart: self.baseStart, visibleWidth: self.visibleWidth) }
             }
             #endif
         }
@@ -557,7 +794,7 @@ struct GuideView: View {
                     .frame(width: 1, height: headerHeight)
                     .offset(x: x)
                 
-                Text(timeLabel(ts))
+                Text(hourTickFormatter.string(from: ts))
                     .font(.caption2)
                     .foregroundColor(.secondary)
                     .offset(x: x + 6, y: 6)
@@ -592,9 +829,9 @@ struct GuideView: View {
             }
         }
     }
-
+    
     private func hourBoundaries(from: Date, to: Date) -> [Date] {
-        if from == cachedHourBoundariesKey { return cachedHourBoundaries }
+        if from == cachedHourBoundariesKey && cachedHourBoundaries.last ?? .distantPast >= to { return cachedHourBoundaries }
         var result: [Date] = []
         var cur = from
         let cal = Calendar.current
@@ -608,8 +845,18 @@ struct GuideView: View {
         }
         return result
     }
-    
-    private func timeLabel(_ d: Date) -> String { hourTickFormatter.string(from: d) }
+
+    private func colorForProgram(_ program: BaseItemDto) -> Color {
+        if program.isMovie == true { return Color.purple }
+        if let genres = program.genres {
+            let lower = genres.map { $0.lowercased() }
+            if lower.contains(where: { $0.contains("news") }) { return Color.orange }
+            if lower.contains(where: { $0.contains("sport") }) { return Color.green }
+            if lower.contains(where: { $0.contains("kid") || $0.contains("animation") }) { return Color.pink }
+            if lower.contains(where: { $0.contains("documentary") }) { return Color.teal }
+        }
+        return Color.blue
+    }
 
     @ViewBuilder
     private func renderProgramBlock(_ b: RenderBlock, channel: LiveTvChannelDto) -> some View {
@@ -617,12 +864,24 @@ struct GuideView: View {
         let trueStart = b.item.startDate ?? b.s
         let trueEnd = b.item.endDate ?? b.e
         
+        let bgColor = colorForProgram(b.item)
+        let isRecording = b.item.timerId != nil || b.item.seriesTimerId != nil
+        
         let content = VStack(alignment: .leading, spacing: 2) {
-            Text(b.item.name ?? "Untitled")
-                .font(.caption).bold()
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .allowsTightening(true)
+            HStack(alignment: .top) {
+                Text(b.item.name ?? "Untitled")
+                    .font(.caption).bold()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .allowsTightening(true)
+                
+                if isRecording {
+                    Spacer(minLength: 2)
+                    Image(systemName: "record.circle")
+                        .foregroundColor(.red)
+                        .font(.system(size: 10))
+                }
+            }
             Text("\(trueStart.formatted(date: .omitted, time: .shortened)) – \(trueEnd.formatted(date: .omitted, time: .shortened))")
                 .font(.caption2)
                 .foregroundColor(.secondary)
@@ -630,9 +889,9 @@ struct GuideView: View {
         }
         .padding(6)
         .frame(width: max(0, b.w), height: rowHeight - 8, alignment: .leading)
-        .background(Color.blue.opacity(0.15))
+        .background(bgColor.opacity(0.15))
         .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.blue.opacity(0.3), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(bgColor.opacity(0.3), lineWidth: 1))
         .contentShape(Rectangle())
 
         NavigationLink(destination: ProgramView(program: jf, appState: appState).environmentObject(appState)) {
@@ -642,398 +901,7 @@ struct GuideView: View {
         .offset(x: b.x, y: 4)
         .id(b.id)
     }
-}
-
-// MARK: - Safe cache network extensions
-private extension GuideView {
     
-    func handleManualRefresh() async {
-        await MainActor.run { isRefreshing = true }
-        
-        // 1. Fully wipe the file caches
-        try? FileManager.default.removeItem(at: channelsCacheURL())
-        if let epgUrl = try? epgCacheFileURL(for: selectedDay) {
-            try? FileManager.default.removeItem(at: epgUrl)
-        }
-        
-        // 2. Clear memory state forcing a re-render
-        await MainActor.run {
-            self.cachedRenderBlocksByChannel = [:]
-            self.collapsedProgramsByChannel = [:]
-            self.groupedProgramsCache = [:]
-        }
-        
-        // 3. Parallel fetch without utilizing local files
-        async let cTask: () = loadChannels()
-        async let pTask: () = fetchEPG(for: selectedDay, updateUI: true)
-        
-        _ = await (cTask, pTask)
-        
-        await MainActor.run { isRefreshing = false }
-    }
-
-    func reloadAll() async {
-        await MainActor.run {
-            isLoading = true
-            errorMessage = nil
-        }
-        
-        let targetDay = selectedDay
-        
-        // Parallel cache fetch
-        async let fetchChannelsFromCache = loadChannelsFromCache()
-        async let fetchProgramsFromCache = loadProgramsFromCache(for: targetDay)
-        
-        let (channelsLoaded, programsLoaded) = await (fetchChannelsFromCache, fetchProgramsFromCache)
-        
-        if !channelsLoaded {
-            await loadChannels()
-        } else {
-            // Background refresh channels so lineup additions/removals are caught seamlessly
-            Task { await loadChannels() }
-        }
-        
-        if !programsLoaded || !epgCacheIsFresh(for: targetDay) {
-            await fetchEPG(for: targetDay, updateUI: true)
-        } else {
-            await backgroundProcessAndGroup(programs: self.programs, for: targetDay)
-        }
-        
-        await MainActor.run { isLoading = false }
-        
-        Task {
-            await prefetchAdjacentDays(around: targetDay)
-            pruneOldEPGCacheFiles()
-        }
-    }
-
-    func loadChannelsFromCache() async -> Bool {
-        do {
-            let url = try channelsCacheURL()
-            let list = try await Task.detached(priority: .utility) {
-                let data = try Data(contentsOf: url)
-                let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .iso8601
-                let decoded = try decoder.decode(ChannelCacheFile.self, from: data)
-                return decoded.items.sorted(by: channelLessThan)
-            }.value
-            
-            if Task.isCancelled { return false }
-            
-            await MainActor.run {
-                self.channels = list
-                self.sortedChannels = list
-            }
-            #if canImport(UIKit)
-            guidePrefetchChannelLogos(list, baseURL: appState.serverURL, apiKey: appState.apiKey)
-            #endif
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    func loadProgramsFromCache(for day: Date) async -> Bool {
-        do {
-            let key = dayKey(from: day)
-            let url = try epgCacheURL(forDayKey: key)
-            let decoded = try await Task.detached(priority: .userInitiated) {
-                let data = try Data(contentsOf: url)
-                let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .iso8601
-                return try decoder.decode(EPGCacheFile.self, from: data)
-            }.value
-
-            if Task.isCancelled { return false }
-
-            await MainActor.run {
-                if Calendar.current.isDate(self.selectedDay, inSameDayAs: day) {
-                    self.programs = decoded.items
-                }
-            }
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    func loadChannels() async {
-        guard let client = appState.client else { return }
-        guard !appState.accessToken.isEmpty else { return }
-        do {
-            var req = URLRequest(url: client.configuration.url.appendingPathComponent("/LiveTv/Channels"))
-            req.httpMethod = "GET"
-            req.cachePolicy = .reloadIgnoringLocalCacheData
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
-            
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
-                throw NSError(domain: "LiveFin", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "Server returned error code \(http.statusCode)"])
-            }
-            
-            if Task.isCancelled { return }
-            
-            let decoded = try JSONDecoder().decode(LiveTvChannelsResponse.self, from: data)
-            let rawList = decoded.items ?? []
-            
-            // Offload sorting from Main thread
-            let list = await Task.detached(priority: .userInitiated) {
-                rawList.sorted(by: channelLessThan)
-            }.value
-            
-            await MainActor.run {
-                self.channels = list
-                self.sortedChannels = list
-                self.scheduleCollapsePrograms(for: self.selectedDay)
-            }
-            try saveChannelsToCache(list)
-            
-            #if canImport(UIKit)
-            guidePrefetchChannelLogos(list, baseURL: appState.serverURL, apiKey: appState.apiKey)
-            #endif
-        } catch {
-            await MainActor.run { self.errorMessage = error.localizedDescription }
-        }
-    }
-
-    func epgCacheIsFresh(for day: Date) -> Bool {
-        guard let url = try? epgCacheFileURL(for: day),
-              let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let modified = attrs[.modificationDate] as? Date else { return false }
-        return Date().timeIntervalSince(modified) < epgCacheTTL
-    }
-
-    func prefetchAdjacentDays(around day: Date) async {
-        let cal = Calendar.current
-        let offsets = [-2, -1, 1, 2]
-        await withTaskGroup(of: Void.self) { group in
-            for off in offsets {
-                let d = cal.date(byAdding: .day, value: off, to: day) ?? day
-                if !epgCacheIsFresh(for: d) {
-                    group.addTask { await self.prefetchDay(d) }
-                }
-            }
-        }
-    }
-
-    func prefetchDay(_ day: Date) async {
-        if fetchingDays.contains(startOfDay(day)) { return }
-        await MainActor.run { fetchingDays.insert(startOfDay(day)) }
-        defer { Task { await MainActor.run { fetchingDays.remove(startOfDay(day)) } } }
-        await fetchEPG(for: day, updateUI: false)
-    }
-
-    // Completely offloaded dictionary grouping & sorting to fix massive main-thread lag
-    func backgroundProcessAndGroup(programs: [BaseItemDto], for day: Date) async {
-        let start = startOfDay(day)
-        let end = endOfDay(day)
-        
-        let builtCache = await Task.detached(priority: .userInitiated) {
-            let filtered = programs.filter { p in
-                let s0 = p.startDate ?? start
-                let defaultEnd = Calendar.current.date(byAdding: .minute, value: 30, to: s0) ?? s0.addingTimeInterval(30 * 60)
-                let s = max(s0, start)
-                let e = min(p.endDate ?? defaultEnd, end)
-                return e > start && s < end
-            }
-            
-            var grouped = Dictionary(grouping: filtered, by: { $0.channelId ?? "" })
-            for (k, v) in grouped {
-                grouped[k] = v.sorted { (a, b) in
-                    let aStart = a.startDate ?? start
-                    let bStart = b.startDate ?? start
-                    return aStart < bStart
-                }
-            }
-            return grouped
-        }.value
-        
-        if Task.isCancelled { return }
-        
-        await MainActor.run {
-            if Calendar.current.isDate(self.selectedDay, inSameDayAs: day) {
-                self.groupedProgramsCache = builtCache
-                self.scheduleCollapsePrograms(for: day)
-            }
-        }
-    }
-
-    func scheduleCollapsePrograms(for targetDay: Date? = nil) {
-        collapseTask?.cancel()
-        Task { @MainActor in
-            if let tDay = targetDay, !Calendar.current.isDate(self.selectedDay, inSameDayAs: tDay) { return }
-            
-            let channelsSnapshot = self.channels
-            let selectedDaySnapshot = self.selectedDay
-            let baseStartSnapshot = self.baseStart
-            let groupedSnapshot = self.groupedProgramsCache
-
-            collapseTask = Task.detached(priority: .userInitiated) {
-                let dayEnd = endOfDay(selectedDaySnapshot)
-                let visibleMinutes = dayEnd.timeIntervalSince(baseStartSnapshot) / 60.0
-                let visibleWidthSnapshot = CGFloat(visibleMinutes) * pxPerMinute
-
-                let priorityCount = min(20, channelsSnapshot.count)
-                let channelsPriority = Array(channelsSnapshot.prefix(priorityCount))
-                let channelsRemainder = Array(channelsSnapshot.dropFirst(priorityCount))
-
-                func processChannels(_ list: [LiveTvChannelDto]) -> ([String: [BaseItemDto]], [String: [RenderBlock]]) {
-                    var localCollapsed: [String: [BaseItemDto]] = [:]
-                    var localBlocks: [String: [RenderBlock]] = [:]
-                    for ch in list {
-                        let items = groupedSnapshot[ch.id] ?? []
-                        if items.isEmpty { continue }
-                        let collapsed = epgStabilizeItems(items, baseStart: baseStartSnapshot, dayEnd: dayEnd, grouped: groupedSnapshot)
-                        localCollapsed[ch.id] = collapsed
-                        localBlocks[ch.id] = epgComputeRenderBlocks(
-                            collapsed, channelId: ch.id,
-                            baseStart: baseStartSnapshot, dayEnd: dayEnd,
-                            visibleWidth: visibleWidthSnapshot, grouped: groupedSnapshot)
-                    }
-                    return (localCollapsed, localBlocks)
-                }
-
-                if !channelsPriority.isEmpty {
-                    let (pCollapsed, pBlocks) = processChannels(channelsPriority)
-                    if Task.isCancelled { return }
-                    
-                    // BATCH MainActor updates to avoid severe SwiftUI UI thrashing
-                    await MainActor.run {
-                        if Calendar.current.isDate(self.selectedDay, inSameDayAs: selectedDaySnapshot) {
-                            var newCollapsed = self.collapsedProgramsByChannel
-                            var newBlocks = self.cachedRenderBlocksByChannel
-                            for (k, v) in pCollapsed { newCollapsed[k] = v }
-                            for (k, v) in pBlocks { newBlocks[k] = v }
-                            self.collapsedProgramsByChannel = newCollapsed
-                            self.cachedRenderBlocksByChannel = newBlocks
-                        }
-                    }
-                }
-
-                let batchSize = 50
-                var idx = 0
-                while idx < channelsRemainder.count {
-                    if Task.isCancelled { break }
-                    let end = min(idx + batchSize, channelsRemainder.count)
-                    let (rCollapsed, rBlocks) = processChannels(Array(channelsRemainder[idx..<end]))
-                    
-                    await MainActor.run {
-                        if Calendar.current.isDate(self.selectedDay, inSameDayAs: selectedDaySnapshot) {
-                            var newCollapsed = self.collapsedProgramsByChannel
-                            var newBlocks = self.cachedRenderBlocksByChannel
-                            for (k, v) in rCollapsed { newCollapsed[k] = v }
-                            for (k, v) in rBlocks { newBlocks[k] = v }
-                            self.collapsedProgramsByChannel = newCollapsed
-                            self.cachedRenderBlocksByChannel = newBlocks
-                        }
-                    }
-                    idx += batchSize
-                }
-            }
-        }
-    }
-
-    private func saveChannelsToCache(_ items: [LiveTvChannelDto]) throws {
-        let payload = ChannelCacheFile(timestamp: Date(), items: items)
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(payload)
-        let url = try channelsCacheURL()
-        try data.write(to: url, options: [.atomic])
-    }
-
-    private func saveEPGToCache(for day: Date, items: [BaseItemDto]) throws {
-        let payload = EPGCacheFile(dayKey: dayKey(from: day), timestamp: Date(), items: items)
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(payload)
-        let url = try epgCacheURL(forDayKey: payload.dayKey)
-        Task.detached(priority: .utility) {
-            try? data.write(to: url, options: [.atomic])
-        }
-    }
-}
-
-private extension GuideView {
-    func fetchEPG(for day: Date, updateUI: Bool) async {
-        guard let client = appState.client else { return }
-        guard !appState.accessToken.isEmpty else { return }
-        
-        if updateUI {
-            await MainActor.run {
-                if programs.isEmpty { isLoading = true }
-                errorMessage = nil
-            }
-        }
-        
-        defer {
-            if updateUI { Task { await MainActor.run { isLoading = false } } }
-        }
-        
-        do {
-            let start = startOfDay(day); let end = endOfDay(day)
-            let programBase = client.configuration.url.appendingPathComponent("/LiveTv/Programs")
-            var comps = URLComponents(url: programBase, resolvingAgainstBaseURL: false)
-            comps?.queryItems = [
-                URLQueryItem(name: "startDate", value: iso8601Basic.string(from: start)),
-                URLQueryItem(name: "endDate", value: iso8601Basic.string(from: end)),
-                URLQueryItem(name: "EnableImages", value: "false"),
-                URLQueryItem(name: "EnableUserData", value: "false"),
-                URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,ParentIndexNumber,IndexNumber,IsRepeat,IsMovie,ImageTags,ChannelId,ProgramId")
-            ]
-            if let uid = appState.user?.id, !uid.isEmpty { comps?.queryItems?.append(URLQueryItem(name: "userId", value: uid)) }
-            guard let final = comps?.url else { return }
-            
-            var req = URLRequest(url: final)
-            req.httpMethod = "GET"
-            req.cachePolicy = .reloadIgnoringLocalCacheData
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
-
-            let dec = JSONDecoder()
-            dec.dateDecodingStrategy = .custom { d in
-                let c = try d.singleValueContainer(); let s = try c.decode(String.self)
-                if let dt = iso8601WithFractional.date(from: s) { return dt }
-                if let dt2 = iso8601Basic.date(from: s) { return dt2 }
-                throw DecodingError.dataCorruptedError(in: c, debugDescription: "Cannot parse date: \(s)")
-            }
-
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
-                throw NSError(domain: "LiveFin", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "Server returned error code \(http.statusCode)"])
-            }
-            
-            if Task.isCancelled { return }
-
-            let decoded = try await Task.detached(priority: .userInitiated) {
-                return try dec.decode(EPGProgramsResponse.self, from: data)
-            }.value
-
-            let items = decoded.items ?? []
-            try? saveEPGToCache(for: day, items: items)
-
-            if Task.isCancelled { return }
-
-            if updateUI {
-                await MainActor.run {
-                    if Calendar.current.isDate(self.selectedDay, inSameDayAs: day) {
-                        self.programs = items
-                    }
-                }
-                await backgroundProcessAndGroup(programs: items, for: day)
-            }
-        } catch {
-            if updateUI {
-                await MainActor.run {
-                    if Calendar.current.isDate(self.selectedDay, inSameDayAs: day) {
-                        self.errorMessage = error.localizedDescription
-                    }
-                }
-            }
-        }
-    }
-
     private func buildJFProgram(from item: BaseItemDto, channel: LiveTvChannelDto, clampedStart s: Date, clampedEnd e: Date) -> JFProgram {
         let fallbackId = item.id ?? "epg_\(channel.id)_\(Int(s.timeIntervalSince1970))"
         var dict: [String: Any] = [
@@ -1053,50 +921,13 @@ private extension GuideView {
         if let isM = item.isMovie { dict["IsMovie"] = isM }
         if let gs = item.genres { dict["Genres"] = gs }
         if let iid = item.id { dict["ItemId"] = iid }
+        if let sid = item.seriesId { dict["SeriesId"] = sid }
+        if let isS = item.isSeries { dict["IsSeries"] = isS }
+        if let sname = item.seriesName { dict["SeriesName"] = sname }
         if let viaJSON = JFProgram(json: dict) {
             return viaJSON
         }
-        let minDict: [String: Any] = [
-            "Id": fallbackId,
-            "Name": item.name ?? ""
-        ]
+        let minDict: [String: Any] = ["Id": fallbackId, "Name": item.name ?? ""]
         return JFProgram(json: minDict) ?? JFProgram(json: ["Id": fallbackId, "Name": ""])!
     }
 }
-
-// MARK: - Cache helpers
-extension GuideView {
-    func channelsCacheFileURL() throws -> URL { try guideCacheDirectory().appendingPathComponent(channelsCacheFile) }
-    func epgCacheFileURL(for day: Date) throws -> URL {
-        let key = dayKey(from: day)
-        return try guideCacheDirectory().appendingPathComponent(epgFilePrefix + key + epgFileExt)
-    }
-
-    func isEPGCacheFresh(for day: Date) -> Bool { epgCacheIsFresh(for: day) }
-
-    func channelsCacheIsFresh() async -> Bool {
-        guard let url = try? channelsCacheURL(),
-              let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let modified = attrs[.modificationDate] as? Date else { return false }
-        return Date().timeIntervalSince(modified) < channelsCacheTTL
-    }
-
-    func pruneOldEPGCacheFiles() {
-        URLCache.shared.removeAllCachedResponses()
-        
-        do {
-            let dir = try guideCacheDirectory()
-            let fm = FileManager.default
-            let files = try fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
-            let horizon = startOfDay(Date())
-            for url in files where url.lastPathComponent.hasPrefix(epgFilePrefix) && url.pathExtension == "json" {
-                let name = url.deletingPathExtension().lastPathComponent
-                let key = String(name.dropFirst(epgFilePrefix.count))
-                if let d = dateFromDayKey(key), startOfDay(d) < horizon {
-                    try? fm.removeItem(at: url)
-                }
-            }
-        } catch { /* ignore */ }
-    }
-}
-

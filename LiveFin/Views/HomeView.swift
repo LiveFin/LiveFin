@@ -14,7 +14,6 @@ struct HomeView: View {
     @EnvironmentObject var appState: AppState
     @StateObject private var vm = HomeViewModel()
     
-    // FIX: Removed @State to prevent Swift Macro initialization crashes
     let nowTimer = Timer.publish(every: 600, on: .main, in: .common).autoconnect()
     
     @State private var hasAppeared: Bool = false
@@ -96,7 +95,7 @@ struct HomeView: View {
                             // Dynamic Sections (No Placeholders)
                             if !vm.onNow.isEmpty {
                                 SectionHeader("On Now")
-                                HorizontalProgramsRow(programs: vm.onNow, style: .landscape)
+                                HorizontalProgramsRow(programs: vm.onNow, style: .landscapeLarge) // Applied new large style
                                     .environmentObject(vm)
                                     .padding(.bottom, 12)
                             }
@@ -335,7 +334,12 @@ final class HomeViewModel: ObservableObject {
         do {
             guard let base = URL(string: appState.serverURL)?.appendingPathComponent("/LiveTv/Channels") else { return nil }
             var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)
-            comps?.queryItems = [URLQueryItem(name: "Limit", value: "500"), URLQueryItem(name: "StartIndex", value: "0")]
+            comps?.queryItems = [
+                URLQueryItem(name: "Limit", value: "500"),
+                URLQueryItem(name: "StartIndex", value: "0"),
+                URLQueryItem(name: "EnableUserData", value: "true"),
+                URLQueryItem(name: "userId", value: appState.userID)
+            ]
             var req = URLRequest(url: comps?.url ?? base)
             req.httpMethod = "GET"
             if !appState.accessToken.isEmpty { req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token") }
@@ -347,7 +351,10 @@ final class HomeViewModel: ObservableObject {
             } else if let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
                 for item in arr { if let ch = JFChannel(json: item) { list.append(ch) } }
             }
-            return list.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            return list.sorted { a, b in
+                if a.isFavorite != b.isFavorite { return a.isFavorite }
+                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            }
         } catch {
             print("HomeView: fetchChannels error: \(error.localizedDescription)")
             return nil
@@ -361,9 +368,9 @@ final class HomeViewModel: ObservableObject {
             var q: [URLQueryItem] = [
                 URLQueryItem(name: "IsAiring", value: "true"),
                 URLQueryItem(name: "Limit", value: "500"),
-                URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber")
+                URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,TimerId,SeriesTimerId")
             ]
-            if let uid = appState.user?.id { q.append(URLQueryItem(name: "userId", value: uid)) }
+            if !appState.userID.isEmpty { q.append(URLQueryItem(name: "userId", value: appState.userID)) }
             comps?.queryItems = q
             guard let url = comps?.url else { return nil }
             var req = URLRequest(url: url)
@@ -409,10 +416,10 @@ final class HomeViewModel: ObservableObject {
                 URLQueryItem(name: "minEndDate",   value: iso.string(from: now)),
                 URLQueryItem(name: "maxStartDate", value: iso.string(from: end)),
                 URLQueryItem(name: "Limit",        value: "500"),
-                URLQueryItem(name: "fields",       value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber")
+                URLQueryItem(name: "fields",       value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,TimerId,SeriesTimerId")
             ]
             filterParam(into: &q)
-            if let uid = appState.user?.id { q.append(URLQueryItem(name: "userId", value: uid)) }
+            if !appState.userID.isEmpty { q.append(URLQueryItem(name: "userId", value: appState.userID)) }
 
             var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)
             comps?.queryItems = q
@@ -430,10 +437,10 @@ final class HomeViewModel: ObservableObject {
                     URLQueryItem(name: "minEndDate",   value: iso.string(from: now)),
                     URLQueryItem(name: "maxStartDate", value: iso.string(from: end)),
                     URLQueryItem(name: "Limit",        value: "500"),
-                    URLQueryItem(name: "fields",       value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber")
+                    URLQueryItem(name: "fields",       value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,TimerId,SeriesTimerId")
                 ]
                 filterParam(into: &qUtc)
-                if let uid = appState.user?.id { qUtc.append(URLQueryItem(name: "userId", value: uid)) }
+                if !appState.userID.isEmpty { qUtc.append(URLQueryItem(name: "userId", value: appState.userID)) }
                 var compsUtc = URLComponents(url: base, resolvingAgainstBaseURL: false)
                 compsUtc?.queryItems = qUtc
                 if let urlUtc = compsUtc?.url {
@@ -564,15 +571,22 @@ final class HomeViewModel: ObservableObject {
 struct JFChannel: Identifiable, Hashable {
     let id: String
     let name: String
+    let isFavorite: Bool
+    
     init?(json: [String: Any]) {
         guard let id = json["Id"] as? String else { return nil }
         self.id = id
         self.name = (json["Name"] as? String) ?? "Channel"
+        if let userData = json["UserData"] as? [String: Any], let isFav = userData["IsFavorite"] as? Bool {
+            self.isFavorite = isFav
+        } else {
+            self.isFavorite = false
+        }
     }
 }
 
 extension JFChannel {
     func asLiveDto(baseURL: String) -> LiveTvChannelDto {
-        LiveTvChannelDto(id: id, name: name, number: nil, startDate: nil, endDate: nil, baseURL: baseURL)
+        LiveTvChannelDto(id: id, name: name, number: nil, startDate: nil, endDate: nil, baseURL: baseURL, userData: UserDataDto(isFavorite: isFavorite))
     }
 }

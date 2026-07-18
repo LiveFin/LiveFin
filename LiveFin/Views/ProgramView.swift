@@ -2,10 +2,33 @@
 
 import SwiftUI
 
+struct UpcomingRecordingIcon: View {
+    @StateObject private var vm: ProgramRecordingViewModel
+    init(program: JFProgram, appState: AppState) {
+        _vm = StateObject(wrappedValue: ProgramRecordingViewModel(program: program, appState: appState))
+    }
+    var body: some View {
+        if vm.isRecordingScheduled {
+            Image(systemName: "record.circle.fill")
+                .font(.headline)
+                .foregroundColor(.red)
+                .padding(.trailing, 8)
+        }
+    }
+}
+
 struct ProgramView: View {
     let program: JFProgram
     @EnvironmentObject private var appState: AppState
     @StateObject private var viewModel: ProgramViewModel
+    
+    // Notification Deep Link Listener
+    @StateObject private var notificationManager = NotificationManager.shared
+    
+    // Recording and Notification States
+    @StateObject private var recordingViewModel: ProgramRecordingViewModel
+    @State private var showRecordingSheet = false
+    @State private var showNotificationSheet = false
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass: UserInterfaceSizeClass?
     #if os(iOS)
@@ -17,6 +40,7 @@ struct ProgramView: View {
     init(program: JFProgram, appState: AppState) {
         self.program = program
         _viewModel = StateObject(wrappedValue: ProgramViewModel(program: program, appState: appState))
+        _recordingViewModel = StateObject(wrappedValue: ProgramRecordingViewModel(program: program, appState: appState))
     }
 
     // MARK: Layout constants
@@ -63,6 +87,7 @@ struct ProgramView: View {
                 titleSection
                 ratingRow
                 channelRow
+                actionButtons
                 metaChips
                 overviewText
                 relatedSection
@@ -73,11 +98,17 @@ struct ProgramView: View {
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { toolbarContent }
+        .sheet(isPresented: $showRecordingSheet) {
+            RecordingConfigurationView(viewModel: recordingViewModel)
+        }
+        .sheet(isPresented: $showNotificationSheet) {
+            NotificationConfigurationView(viewModel: recordingViewModel)
+        }
         .fullScreenCover(item: $viewModel.streamItem) { item in
             DragonetPlayerView(
                 streamURL: item.url,
                 channel: viewModel.buildChannel(),
+                program: program,
                 appState: appState,
                 onPlaybackError: { msg in
                     viewModel.streamItem = nil
@@ -95,8 +126,26 @@ struct ProgramView: View {
         } message: {
             Text(viewModel.playbackErrorMessage ?? "An unknown error occurred while trying to play the channel.")
         }
+        .onChange(of: notificationManager.requestedProgramId) { programId in
+            // Handle if a user taps while they are already viewing this program
+            if programId == program.id && notificationManager.autoPlayRequested {
+                Task { await viewModel.startPlayback() }
+                // Consume link
+                notificationManager.requestedProgramId = nil
+                notificationManager.autoPlayRequested = false
+            }
+        }
         .onAppear {
             viewModel.onAppear()
+            recordingViewModel.checkPendingNotifications()
+            
+            // Handle if the view was just opened via deep link
+            if notificationManager.requestedProgramId == program.id && notificationManager.autoPlayRequested {
+                Task { await viewModel.startPlayback() }
+                // Consume link
+                notificationManager.requestedProgramId = nil
+                notificationManager.autoPlayRequested = false
+            }
         }
         .task(id: program.id) {
             await viewModel.load()
@@ -195,6 +244,65 @@ struct ProgramView: View {
             }
         }
     }
+    
+    @ViewBuilder private var actionButtons: some View {
+        let isLikelySeries = program.isSeries || (program.seriesId != nil && !program.seriesId!.isEmpty) || (program.seriesName != nil && !program.seriesName!.isEmpty)
+
+        HStack(spacing: 16) {
+            if viewModel.isLive, viewModel.effectiveChannelId != nil {
+                Button {
+                    Task { await viewModel.startPlayback() }
+                } label: {
+                    Label("Play", systemImage: "play.fill")
+                        .font(.headline)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .foregroundColor(.white)
+                        .background(Color.blue.opacity(0.4))
+                        .glassEffect(in: Capsule())
+                }
+            }
+            
+            // Only allow scheduling notifications if it's in the future OR it's a series (where we can schedule future eps)
+            if !viewModel.isLive || isLikelySeries {
+                Button {
+                    showNotificationSheet = true
+                } label: {
+                    if viewModel.isLive {
+                        Image(systemName: recordingViewModel.hasNotificationScheduled ? "bell.fill" : "bell")
+                            .font(.headline)
+                            .padding(12)
+                            .foregroundColor(recordingViewModel.hasNotificationScheduled ? .yellow : .primary)
+                            .background(recordingViewModel.hasNotificationScheduled ? Color.yellow.opacity(0.3) : Color.gray.opacity(0.2))
+                            .glassEffect(in: Circle())
+                    } else {
+                        Label(
+                            recordingViewModel.hasNotificationScheduled ? "Reminder Set" : "Notify Me",
+                            systemImage: recordingViewModel.hasNotificationScheduled ? "bell.fill" : "bell"
+                        )
+                        .font(.headline)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .foregroundColor(recordingViewModel.hasNotificationScheduled ? .yellow : .primary)
+                        .background(recordingViewModel.hasNotificationScheduled ? Color.yellow.opacity(0.3) : Color.gray.opacity(0.2))
+                        .glassEffect(in: Capsule())
+                    }
+                }
+            }
+            
+            Button {
+                showRecordingSheet = true
+            } label: {
+                Image(systemName: recordingViewModel.isRecordingScheduled ? "record.circle.fill" : "record.circle")
+                    .font(.headline)
+                    .padding(12)
+                    .foregroundColor(recordingViewModel.isRecordingScheduled ? .red : .primary)
+                    .background(recordingViewModel.isRecordingScheduled ? Color.red.opacity(0.4) : Color.gray.opacity(0.2))
+                    .glassEffect(in: Circle())
+            }
+        }
+        .padding(.vertical, 4)
+    }
 
     @ViewBuilder private var metaChips: some View {
         let chips = viewModel.chips()
@@ -265,34 +373,24 @@ struct ProgramView: View {
                             destination: ProgramView(program: up, appState: appState)
                                 .environmentObject(appState)
                         ) {
-                            UpcomingProgramRow(
-                                program: up,
-                                referenceName: program.name,
-                                referenceStart: program.startDate
-                            )
-                            .environmentObject(appState)
+                            HStack {
+                                UpcomingProgramRow(
+                                    program: up,
+                                    referenceName: program.name,
+                                    referenceStart: program.startDate
+                                )
+                                .environmentObject(appState)
+                                
+                                Spacer()
+                                
+                                UpcomingRecordingIcon(program: up, appState: appState)
+                            }
                         }
                         .buttonStyle(.plain)
                         Divider().padding(.leading, 8)
                     }
                 }
                 .background(RoundedRectangle(cornerRadius: 12).fill(Color(UIColor.secondarySystemBackground)))
-            }
-        }
-    }
-
-    // MARK: Toolbar
-
-    @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
-        if viewModel.isLive, viewModel.effectiveChannelId != nil {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button { Task { await viewModel.startPlayback() } } label: {
-                    Image(systemName: "play.fill")
-                        .resizable()
-                        .frame(width: 16, height: 16)
-                        .foregroundColor(.blue)
-                }
-                .accessibilityLabel("Play Live")
             }
         }
     }

@@ -19,7 +19,6 @@ struct JFDynamicChapter: Decodable {
     let MarkerType: String?
 }
 
-// Added modern Marker model for Jellyfin 10.9+ / Intro Skipper
 struct JFDynamicMarker: Decodable {
     let Id: Int?
     let Name: String?
@@ -37,7 +36,6 @@ struct JFMediaStream: Decodable, Hashable {
     let IsDefault: Bool?
     let IsForced: Bool?
     
-    // Support for server-driven delivery URLs (ChatGPT feedback)
     let DeliveryUrl: String?
     let DeliveryMethod: String?
     let IsExternal: Bool?
@@ -61,7 +59,6 @@ struct JFMediaStream: Decodable, Hashable {
         if let display = DisplayTitle, !display.isEmpty { return display }
         if let title = Title, !title.isEmpty, title.lowercased() != "und" { return title }
         if let lang = Language, !lang.isEmpty { return Locale.current.localizedString(forLanguageCode: lang)?.capitalized ?? lang.uppercased() }
-        
         return "Unknown Track"
     }
 }
@@ -74,7 +71,7 @@ struct JFMediaSource: Decodable {
 struct JFItemMediaData: Decodable {
     let Chapters: [JFDynamicChapter]?
     let MediaSources: [JFMediaSource]?
-    let Markers: [JFDynamicMarker]? // Added support for native intro markers
+    let Markers: [JFDynamicMarker]?
 }
 
 struct VTTCue: Identifiable, Sendable {
@@ -93,6 +90,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
     @Published var playlist: [JFItemDto]
     @Published var currentIndex: Int
     @Published var seriesName: String?
+    @Published var isShuffled: Bool
     
     @Published var controlsVisible: Bool = true
     @Published var isPlaying: Bool = true
@@ -100,10 +98,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
     @Published var isPiPActive: Bool = false
     @Published var isCCEnabled: Bool = false
     
-    // Guard flag to prevent feedback loops when the player item changes, reloads, or resets
     @Published var isSettingUpPlayerItem: Bool = false
-    
-    // Auto Play Next
     @Published var autoPlayNextEpisode: Bool = true
     
     // Audio Tracks
@@ -114,6 +109,11 @@ final class PlanktonPlayerViewModel: ObservableObject {
     @Published var availableSubtitleTracks: [JFMediaStream] = []
     @Published var selectedSubtitleTrack: JFMediaStream? = nil
     
+    // Native Apple Subtitles (For PiP/Airplay)
+    private var nativeSubtitleGroup: AVMediaSelectionGroup?
+    private var nativeSubtitleOptions: [AVMediaSelectionOption] = []
+    
+    // Custom SwiftUI Subtitles (For Direct Play/Instant Sync)
     @Published var vttCues: [VTTCue] = []
     @Published var currentSubtitleText: String = ""
     @Published var currentMediaSourceId: String? = nil
@@ -134,26 +134,26 @@ final class PlanktonPlayerViewModel: ObservableObject {
     private var countdownDismissed: Bool = false
     private var countdownTimerTask: Task<Void, Never>? = nil
     
+    var onPlaybackError: ((String) -> Void)?
+    
     let appState: AppState
     @Published var streamURL: URL? = nil
     
     private var timeObserver: Any?
     private var itemStatusObserver: NSKeyValueObservation?
     private var playbackStateObserver: NSKeyValueObservation?
-    private var cancellables = Set<AnyCancellable>()
     
     private var hasResumedCurrentItem = false
     private var lastReportedTicks: Int64 = 0
-    
-    // Local dictionary cache to prevent Apple's MPNowPlayingInfoCenter from returning nil/wiping out items
     private var nowPlayingInfo: [String: Any] = [:]
     
     var onFinishedPlaylist: (() -> Void)?
 
-    init(playlist: [JFItemDto], startIndex: Int, seriesName: String?, appState: AppState) {
+    init(playlist: [JFItemDto], startIndex: Int, seriesName: String?, isShuffled: Bool = false, appState: AppState) {
         self.playlist = playlist
         self.currentIndex = startIndex
         self.seriesName = seriesName
+        self.isShuffled = isShuffled
         self.appState = appState
         
         self.player.automaticallyWaitsToMinimizeStalling = true
@@ -220,11 +220,9 @@ final class PlanktonPlayerViewModel: ObservableObject {
         for marker in activeMarkers {
             let startTicks = marker.PositionTicks ?? 0
             let endTicks = marker.EndPositionTicks ?? .max
-            
             if currentTicks >= startTicks && currentTicks < endTicks {
                 let name = marker.Name?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let type = marker.MarkerType?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                
                 if type == "introstart" || type == "intro" || name.contains("intro") {
                     return Double(endTicks) / 10_000_000.0
                 }
@@ -234,11 +232,9 @@ final class PlanktonPlayerViewModel: ObservableObject {
         for (index, chapter) in activeChapters.enumerated() {
             let startTicks = chapter.StartPositionTicks ?? 0
             let nextTicks = (index + 1 < activeChapters.count) ? (activeChapters[index + 1].StartPositionTicks ?? .max) : .max
-            
             if currentTicks >= startTicks && currentTicks < nextTicks {
                 let name = chapter.Name?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let type = chapter.MarkerType?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                
                 if name.contains("intro") || type.contains("intro") || name == "opening" {
                     return nextTicks == .max ? nil : Double(nextTicks) / 10_000_000.0
                 }
@@ -249,25 +245,20 @@ final class PlanktonPlayerViewModel: ObservableObject {
     
     var creditsStartTime: Double? {
         guard duration > 0 else { return nil }
-        
         for marker in activeMarkers {
             let name = marker.Name?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let type = marker.MarkerType?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            
             if type == "credits" || name.contains("credits") || name == "ending" {
                 return Double(marker.PositionTicks ?? 0) / 10_000_000.0
             }
         }
-        
         for chapter in activeChapters {
             let name = chapter.Name?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let type = chapter.MarkerType?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            
             if type == "credits" || name.contains("credits") || name == "ending" {
                 return Double(chapter.StartPositionTicks ?? 0) / 10_000_000.0
             }
         }
-        
         return max(0, duration - 30.0)
     }
     
@@ -292,6 +283,9 @@ final class PlanktonPlayerViewModel: ObservableObject {
         self.availableSubtitleTracks = []
         self.selectedSubtitleTrack = nil
         
+        self.nativeSubtitleGroup = nil
+        self.nativeSubtitleOptions = []
+        
         self.vttCues = []
         self.currentSubtitleText = ""
         self.currentMediaSourceId = nil
@@ -305,7 +299,9 @@ final class PlanktonPlayerViewModel: ObservableObject {
         self.activeChapters = []
         self.activeMarkers = []
         
-        self.dynamicallyFetchNextEpisodes(for: item)
+        if !self.isShuffled {
+            self.dynamicallyFetchNextEpisodes(for: item)
+        }
         
         Task {
             let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
@@ -359,8 +355,8 @@ final class PlanktonPlayerViewModel: ObservableObject {
         }
         
         do {
-            // Determine if the subtitle needs to be burned in (e.g. PGS/ASS). If it's a text format, we omit the stream index
-            // so Jellyfin won't burn it in, allowing us to overlay it natively in the app.
+            // ONLY pass the SubtitleStreamIndex if it's an image format (PGS/ASS) that REQUIRES burn-in
+            // For text subs, we handle them natively to avoid the server reloading/losing sync.
             let subtitleStreamIndexToTranscode: Int?
             if let selectedSub = self.selectedSubtitleTrack, !isTextSub(selectedSub) {
                 subtitleStreamIndexToTranscode = selectedSub.Index
@@ -408,7 +404,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
                 queryItems.append(URLQueryItem(name: "AudioStreamIndex", value: String(audioIndex)))
             }
             
-            // Clean up any rogue SubtitleStreamIndex tags
             if let subIndex = subtitleStreamIndexToTranscode {
                 queryItems.removeAll(where: { $0.name.lowercased() == "subtitlestreamindex" })
                 queryItems.append(URLQueryItem(name: "SubtitleStreamIndex", value: String(subIndex)))
@@ -428,7 +423,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
                         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, policy: .longFormVideo, options: [])
                         try await AVAudioSession.sharedInstance().setActive(true)
                     } catch {
-                        print("Failed to set audio session category/activate: \(error)")
+                        print("Failed to set audio session: \(error)")
                     }
                 }
                 
@@ -451,7 +446,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
                     self.seek(to: targetTime)
                 }
                 
-                // If it's a text subtitle format, we download it instead of having the server transcode it
+                // Fetch overlay subtitles natively if they are text format
                 if let sub = self.selectedSubtitleTrack, isTextSub(sub) {
                     self.fetchExternalSubtitlePayload(sub)
                 }
@@ -461,6 +456,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
             await MainActor.run {
                 self.isBuffering = false
                 self.isSettingUpPlayerItem = false
+                self.onPlaybackError?(error.localizedDescription)
             }
         }
     }
@@ -480,6 +476,16 @@ final class PlanktonPlayerViewModel: ObservableObject {
                     self.duration = observedItem.duration.seconds.isNaN ? 0 : observedItem.duration.seconds
                     self.updateNowPlayingPlaybackState()
                     
+                    // Extract native HLS subtitle tracks if provided by server
+                    Task {
+                        if let group = try? await observedItem.asset.loadMediaSelectionGroup(for: .legible) {
+                            await MainActor.run {
+                                self.nativeSubtitleGroup = group
+                                self.nativeSubtitleOptions = group.options
+                            }
+                        }
+                    }
+                    
                     if !self.hasResumedCurrentItem {
                         self.hasResumedCurrentItem = true
                         if let ticks = self.currentItem?.UserData?.PlaybackPositionTicks, ticks > 0 {
@@ -495,7 +501,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
             }
         }
         
-        // 200ms updates to keep subtitle syncing smooth
         let interval = CMTime(seconds: 0.2, preferredTimescale: 600)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             guard let self = self, let currentItem = self.currentItem else { return }
@@ -504,7 +509,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
                 self.currentTime = time.seconds
             }
             
-            // Subtitle Sync Engine
+            // Subtitle Sync Engine (Only used if native HLS tracks aren't active)
             if !self.vttCues.isEmpty {
                 let currentSecs = time.seconds
                 if let activeCue = self.vttCues.first(where: { currentSecs >= $0.startTime && currentSecs <= $0.endTime }) {
@@ -522,7 +527,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
                 }
             }
             
-            // Next Episode Countdown Engine
             if self.isEpisode && self.hasNextEpisode && self.autoPlayNextEpisode && !self.countdownDismissed && !self.showNextEpisodeCountdown {
                 if let triggerTime = self.creditsStartTime, time.seconds >= triggerTime {
                     self.startNextEpisodeCountdown()
@@ -538,8 +542,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
             }
         }
     }
-    
-    // MARK: - Core Playback State Observer
     
     private func setupPlaybackStateObserver() {
         playbackStateObserver = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] player, _ in
@@ -562,7 +564,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
               let currentItem = currentItem else { return }
         
         let totalTicks = Int64(duration * 10_000_000)
-        
         let playSessionId = streamURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
             .queryItems?.first(where: { $0.name.caseInsensitiveCompare("PlaySessionId") == .orderedSame })?.value
         appState.reportPlaybackStopped(itemId: currentItem.Id, positionTicks: totalTicks, playSessionId: playSessionId)
@@ -662,7 +663,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
     func stopAndDismiss() {
         if let id = currentItem?.Id {
             let ticks = Int64(currentTime * 10_000_000)
-            
             let playSessionId = streamURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
                 .queryItems?.first(where: { $0.name.caseInsensitiveCompare("PlaySessionId") == .orderedSame })?.value
             appState.reportPlaybackStopped(itemId: id, positionTicks: ticks, playSessionId: playSessionId)
@@ -676,7 +676,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
     func selectAudioTrack(_ option: JFMediaStream) {
         guard self.selectedAudioTrack != option else { return }
         self.selectedAudioTrack = option
-        
         Task { await self.playCurrentSelection(resumeTime: self.currentTime) }
     }
     
@@ -690,19 +689,38 @@ final class PlanktonPlayerViewModel: ObservableObject {
             self.isCCEnabled = desiredCCState
         }
         
+        // Reset overlay state
         activeSubtitleTask?.cancel()
         self.vttCues = []
         self.currentSubtitleText = ""
         
-        let wasBurningIn = previousSub != nil && !isTextSub(previousSub!)
-        let willBurnIn = option != nil && !isTextSub(option!)
+        // Turn off any native tracks first
+        if let group = nativeSubtitleGroup {
+            player.currentItem?.select(nil, in: group)
+        }
         
-        // If we transitioned to/from an image format, Jellyfin needs to restart the transcode session
-        if willBurnIn || wasBurningIn {
-            Task { await self.playCurrentSelection(resumeTime: self.currentTime) }
-        } else if let selectedSub = option {
-            // Text subtitle switches are instant because they are downloaded client-side
+        guard let selectedSub = option else { return } // Subtitles turned off
+        
+        // --- DUAL ENGINE SUBTITLE LOGIC ---
+        
+        // 1. Check if Apple HLS Native Tracks exist (Perfect for PiP/Airplay)
+        if let group = nativeSubtitleGroup,
+           let nativeOption = nativeSubtitleOptions.first(where: {
+               $0.displayName == selectedSub.safeDisplayName ||
+               $0.extendedLanguageTag == selectedSub.Language
+           }) {
+            // Found native HLS subtitle! Switch instantly without reloading.
+            player.currentItem?.select(nativeOption, in: group)
+            return
+        }
+        
+        // 2. Fallback to Custom Overlay OR Server Transcode
+        if isTextSub(selectedSub) {
+            // Text Subtitle (VTT/SRT) -> Download & Overlay locally (Instant, Perfect Sync, No Reload)
             fetchExternalSubtitlePayload(selectedSub)
+        } else {
+            // Image Subtitle (PGS/ASS) -> Force Server Burn-In (Will cause a reload, but unavoidable)
+            Task { await self.playCurrentSelection(resumeTime: self.currentTime) }
         }
     }
     
@@ -711,13 +729,10 @@ final class PlanktonPlayerViewModel: ObservableObject {
         let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
         
         let subtitleUrlString: String
-        
-        // Follow ChatGPT's advice: Use the explicit DeliveryUrl provided by the server if available
         if let deliveryUrl = option.DeliveryUrl, !deliveryUrl.isEmpty {
             let prefix = deliveryUrl.hasPrefix("/") ? "" : "/"
             subtitleUrlString = "\(base)\(prefix)\(deliveryUrl)\(deliveryUrl.contains("?") ? "&" : "?")api_key=\(appState.accessToken)"
         } else {
-            // Fallback for older servers or if not explicitly provided
             guard let mediaSourceId = self.currentMediaSourceId ?? self.defaultMediaSourceId else { return }
             subtitleUrlString = "\(base)/Videos/\(item.Id)/\(mediaSourceId)/Subtitles/\(option.Index ?? 0)/0/Stream.vtt?api_key=\(appState.accessToken)"
         }
@@ -732,7 +747,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
                 let (data, response) = try await URLSession.shared.data(for: req)
                 guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
                       let vttText = String(data: data, encoding: .utf8) else {
-                    print("Failed to decode VTT text or bad status")
                     return
                 }
                 
@@ -750,8 +764,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
     
     private func parseVTTTime(_ timeString: String) -> Double? {
         let cleanString = timeString.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // Handles both SRT (comma) and VTT (period) milliseconds
         let timeParts = cleanString.components(separatedBy: CharacterSet(charactersIn: ".,"))
         let mainTime = timeParts[0]
         let fraction = timeParts.count > 1 ? (Double("0." + timeParts[1]) ?? 0.0) : 0.0
@@ -775,7 +787,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
     
     private func parseVTT(_ vttText: String) -> [VTTCue] {
         var cues: [VTTCue] = []
-        // Normalize line endings regardless of server OS
         let text = vttText.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         let lines = text.components(separatedBy: "\n")
         
@@ -786,8 +797,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
                 let parts = line.components(separatedBy: "-->")
                 if parts.count == 2 {
                     let startStr = parts[0].trimmingCharacters(in: .whitespaces)
-                    
-                    // Strip inline formatting attributes that may follow the end time
                     let endStr = parts[1].trimmingCharacters(in: .whitespaces).components(separatedBy: .whitespaces).first ?? parts[1].trimmingCharacters(in: .whitespaces)
                     
                     if let start = parseVTTTime(startStr), let end = parseVTTTime(endStr) {
@@ -798,7 +807,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
                             i += 1
                         }
                         
-                        // Strip HTML/Formatting tags (e.g., <i>, <c.color>)
                         let cleanText = textLines.joined(separator: "\n").replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
                         if !cleanText.isEmpty {
                             cues.append(VTTCue(startTime: start, endTime: end, text: cleanText))
@@ -818,7 +826,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
         if !enabled {
             selectSubtitleTrack(nil)
         } else {
-            // Turn on the first available option if none is selected
             if selectedSubtitleTrack == nil {
                 let firstStandard = availableSubtitleTracks.first(where: { $0.IsForced != true }) ?? availableSubtitleTracks.first
                 if let track = firstStandard {
@@ -832,7 +839,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
     
     private func updateNowPlayingInfo() {
         guard let item = currentItem else { return }
-        
         let isEpisodeVal = item.Type.lowercased() == "episode"
         let activeSeriesName = seriesName ?? item.SeriesName
         
@@ -844,11 +850,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
             let s = item.ParentIndexNumber.map { String(format: "S%02d", $0) } ?? ""
             let e = item.IndexNumber.map { String(format: "E%02d", $0) } ?? ""
             let se = [s, e].filter { !$0.isEmpty }.joined()
-            if !se.isEmpty {
-                subtitle = "\(se) • \(item.Name)"
-            } else {
-                subtitle = item.Name
-            }
+            subtitle = se.isEmpty ? item.Name : "\(se) • \(item.Name)"
         } else {
             title = item.Name
             subtitle = ""
@@ -902,7 +904,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
                             self.setFallbackArtwork(item: item, base: base)
                             return
                         }
-                        
                         if let sThumb = imageTags["Thumb"] {
                             self.fetchAndSetNowPlayingArtwork(itemId: sId, imageType: "Thumb", tag: sThumb, base: base)
                         } else if let sBackdrop = (sJson["BackdropImageTags"] as? [String])?.first {
@@ -924,13 +925,10 @@ final class PlanktonPlayerViewModel: ObservableObject {
     
     func updateNowPlayingPlaybackState() {
         guard currentItem != nil else { return }
-        
         nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
         nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
-        
         let activeRate = (isPlaying && !isBuffering) ? 1.0 : 0.0
         nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = activeRate
-        
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
     }
     
@@ -946,7 +944,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
     
     private func fetchAndSetNowPlayingArtwork(itemId: String, imageType: String, tag: String, base: String) {
         guard let url = URL(string: "\(base)/Items/\(itemId)/Images/\(imageType)?tag=\(tag)&maxWidth=800") else { return }
-        
         var req = URLRequest(url: url)
         req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
         
@@ -1026,7 +1023,6 @@ final class PlanktonPlayerViewModel: ObservableObject {
                 
                 if let matchedIndex = decoded.Items.firstIndex(where: { $0.Id == item.Id }) {
                     let nextEpisodes = Array(decoded.Items[(matchedIndex + 1)...])
-                    
                     if !nextEpisodes.isEmpty {
                         await MainActor.run {
                             guard self.currentIndex == self.playlist.count - 1 else { return }
@@ -1092,9 +1088,12 @@ struct PlanktonPlayerView: View {
     @StateObject private var vm: PlanktonPlayerViewModel
     @State private var playerController: DragonetPlayerController?
     
-    init(playlist: [JFItemDto], startIndex: Int, seriesName: String?, appState: AppState) {
+    let onPlaybackError: ((String) -> Void)?
+    
+    init(playlist: [JFItemDto], startIndex: Int, seriesName: String?, isShuffled: Bool = false, appState: AppState, onPlaybackError: ((String) -> Void)? = nil) {
         AppDelegate.orientationLock = .landscape
-        _vm = StateObject(wrappedValue: PlanktonPlayerViewModel(playlist: playlist, startIndex: startIndex, seriesName: seriesName, appState: appState))
+        self.onPlaybackError = onPlaybackError
+        _vm = StateObject(wrappedValue: PlanktonPlayerViewModel(playlist: playlist, startIndex: startIndex, seriesName: seriesName, isShuffled: isShuffled, appState: appState))
     }
     
     var body: some View {
@@ -1109,7 +1108,7 @@ struct PlanktonPlayerView: View {
                     isPiPActive: $vm.isPiPActive,
                     isCCEnabled: $vm.isCCEnabled,
                     controlsVisible: $vm.controlsVisible,
-                    onPlaybackError: { _ in }
+                    onPlaybackError: self.onPlaybackError
                 ) { vc in
                     vc.updatesNowPlayingInfoCenter = false
                     
@@ -1134,7 +1133,7 @@ struct PlanktonPlayerView: View {
                     .allowsHitTesting(false)
             }
             
-            // ── 3. Subtitles Overlay ──
+            // ── 3. Custom Subtitles Overlay (Restored for Direct Play Sync) ──
             if !vm.currentSubtitleText.isEmpty {
                 VStack {
                     Spacer()
@@ -1146,19 +1145,18 @@ struct PlanktonPlayerView: View {
                         .padding(.vertical, 10)
                         .background(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(Color.black.opacity(0.7))
+                                .fill(Color.black.opacity(0.4))
                         )
-                        .padding(.bottom, vm.controlsVisible ? 110 : 44) // Dynamically push up/down to stay out of progress bars
+                        .padding(.bottom, vm.controlsVisible ? 85 : 44) // Perfect padding
                         .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
                         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: vm.controlsVisible)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 80)
-                .allowsHitTesting(false) // Never block control click gestures
+                .allowsHitTesting(false)
             }
             
             // ── 4. Independent "Skip Intro" Button ──
-            // Appears automatically outside the normal controls visibility lifecycle
             if let skipTarget = vm.currentIntroEndTarget {
                 VStack {
                     Spacer()
@@ -1175,15 +1173,12 @@ struct PlanktonPlayerView: View {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
-                            .background(.black.opacity(0.6))
                             .foregroundStyle(.white)
-                            .clipShape(Capsule())
-                            .overlay(Capsule().strokeBorder(.white.opacity(0.3), lineWidth: 1))
+                            .glassEffect(in: Capsule())
                         }
                     }
                     .padding(.horizontal, 32)
-                    // If controls are visible, sit above the scrubber. If hidden, sit closer to the bottom.
-                    .padding(.bottom, vm.controlsVisible ? 110 : 50)
+                    .padding(.bottom, vm.controlsVisible ? 85 : 50)
                     .safeAreaPadding(.horizontal)
                 }
                 .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -1230,13 +1225,11 @@ struct PlanktonPlayerView: View {
                         }
                         .padding(.vertical, 10)
                         .padding(.horizontal, 16)
-                        .background(Color.black.opacity(0.85))
-                        .clipShape(RoundedRectangle(cornerRadius: 40, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 40, style: .continuous).strokeBorder(.white.opacity(0.2), lineWidth: 1))
+                        .glassEffect(in: RoundedRectangle(cornerRadius: 40, style: .continuous))
                         .shadow(color: .black.opacity(0.4), radius: 10, x: 0, y: 4)
                     }
                     .padding(.horizontal, 32)
-                    .padding(.bottom, vm.controlsVisible ? 110 : 50)
+                    .padding(.bottom, vm.controlsVisible ? 85 : 50)
                     .safeAreaPadding(.horizontal)
                 }
                 .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -1252,6 +1245,8 @@ struct PlanktonPlayerView: View {
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .onAppear {
+            vm.onPlaybackError = self.onPlaybackError
+            
             vm.onFinishedPlaylist = {
                 dismiss()
             }
@@ -1319,10 +1314,22 @@ struct PlanktonPlayerView: View {
                         let activeSeriesName = vm.seriesName ?? vm.currentItem?.SeriesName
                         
                         if vm.isEpisode, let series = activeSeriesName, !series.isEmpty {
-                            Text(series)
-                                .font(.title3.bold())
-                                .foregroundStyle(.white)
-                                .shadow(radius: 2)
+                            HStack(alignment: .center, spacing: 8) {
+                                Text(series)
+                                    .font(.title3.bold())
+                                    .foregroundStyle(.white)
+                                    .shadow(radius: 2)
+                                
+                                if vm.isShuffled {
+                                    Image(systemName: "shuffle")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background(Color.blue.opacity(0.8))
+                                        .clipShape(Capsule())
+                                }
+                            }
                             
                             let s = vm.currentItem?.ParentIndexNumber.map { String(format: "S%02d", $0) } ?? ""
                             let e = vm.currentItem?.IndexNumber.map { String(format: "E%02d", $0) } ?? ""
@@ -1330,10 +1337,18 @@ struct PlanktonPlayerView: View {
                             let epName = vm.currentItem?.Name ?? ""
                             let subtitleText = se.isEmpty ? epName : "\(se) • \(epName)"
                             
-                            Text(subtitleText)
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(.white.opacity(0.85))
-                                .shadow(radius: 2)
+                            HStack {
+                                Text(subtitleText)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.white.opacity(0.85))
+                                    .shadow(radius: 2)
+                                
+                                if vm.isShuffled {
+                                    Text("— Shuffling Episodes")
+                                        .font(.caption.weight(.medium))
+                                        .foregroundStyle(.blue.opacity(0.9))
+                                }
+                            }
                         } else {
                             Text(vm.currentItem?.Name ?? "")
                                 .font(.title3.bold())
@@ -1347,7 +1362,6 @@ struct PlanktonPlayerView: View {
                     Spacer()
                     
                     HStack(spacing: 12) {
-                        // ── Auto Play Next Episode Toggle ──
                         if vm.isEpisode {
                             Button {
                                 vm.autoPlayNextEpisode.toggle()
@@ -1361,7 +1375,6 @@ struct PlanktonPlayerView: View {
                             .glassEffect(in: Circle())
                         }
                         
-                        // ── Audio / Language Tracks Menu ──
                         if vm.availableAudioTracks.isEmpty {
                             Image(systemName: "waveform")
                                 .foregroundStyle(.white.opacity(0.3))
@@ -1392,7 +1405,6 @@ struct PlanktonPlayerView: View {
                             .glassEffect(in: Circle())
                         }
                         
-                        // ── Subtitles / Closed Captions Tracks Menu ──
                         if vm.availableSubtitleTracks.isEmpty {
                             Image(systemName: "captions.bubble")
                                 .foregroundStyle(.white.opacity(0.3))
@@ -1460,8 +1472,6 @@ struct PlanktonPlayerView: View {
                 
                 // ── Center Controls ──
                 HStack(spacing: 24) {
-                    
-                    // ── Restart Button ──
                     if vm.isEpisode {
                         Button {
                             vm.seek(to: 0)
@@ -1510,7 +1520,6 @@ struct PlanktonPlayerView: View {
                             .glassEffect(in: Circle())
                     }
                     
-                    // ── Next Episode Button ──
                     if vm.isEpisode && vm.hasNextEpisode {
                         Button {
                             vm.skipToNextEpisode()
@@ -1575,5 +1584,57 @@ struct PlanktonPlayerView: View {
         } else {
             return String(format: "%d:%02d", minutes, secs)
         }
+    }
+}
+
+// MARK: - Presentation helper
+
+struct PlanktonPlayerModifier: ViewModifier {
+    @Binding var isPresented: Bool
+    let playlist: [JFItemDto]
+    let startIndex: Int
+    let seriesName: String?
+    let isShuffled: Bool
+    let onPlaybackError: ((String) -> Void)?
+    
+    @EnvironmentObject var appState: AppState
+    
+    func body(content: Content) -> some View {
+        content
+            .fullScreenCover(isPresented: $isPresented) {
+                if !playlist.isEmpty {
+                    PlanktonPlayerView(
+                        playlist: playlist,
+                        startIndex: startIndex,
+                        seriesName: seriesName,
+                        isShuffled: isShuffled,
+                        appState: appState,
+                        onPlaybackError: onPlaybackError
+                    )
+                    .environmentObject(appState)
+                } else {
+                    Color.black.ignoresSafeArea()
+                }
+            }
+    }
+}
+
+extension View {
+    func planktonPlayer(
+        isPresented: Binding<Bool>,
+        playlist: [JFItemDto],
+        startIndex: Int = 0,
+        seriesName: String? = nil,
+        isShuffled: Bool = false,
+        onPlaybackError: ((String) -> Void)? = nil
+    ) -> some View {
+        self.modifier(PlanktonPlayerModifier(
+            isPresented: isPresented,
+            playlist: playlist,
+            startIndex: startIndex,
+            seriesName: seriesName,
+            isShuffled: isShuffled,
+            onPlaybackError: onPlaybackError
+        ))
     }
 }

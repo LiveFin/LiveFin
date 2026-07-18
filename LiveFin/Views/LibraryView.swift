@@ -7,54 +7,7 @@
 
 import SwiftUI
 
-// MARK: - DTOs
-struct JFViewDto: Identifiable, Decodable {
-    let Id: String
-    let Name: String
-    let CollectionType: String?
-    let ImageTags: [String: String]?
-    
-    var id: String { Id }
-    var primaryImageTag: String? { ImageTags?["Primary"] }
-}
-
-struct JFUserData: Decodable, Hashable {
-    let PlaybackPositionTicks: Int64?
-    let Played: Bool?
-}
-
-struct JFItemDto: Identifiable, Decodable, Hashable {
-    let Id: String
-    let Name: String
-    let `Type`: String
-    let Overview: String?
-    let ImageTags: [String: String]?
-    let BackdropImageTags: [String]?
-    let RunTimeTicks: Int64?
-    let Genres: [String]?
-    let IndexNumber: Int?
-    let ParentIndexNumber: Int?
-    let UserData: JFUserData?
-    
-    // Additional Metadata
-    let ProductionYear: Int?
-    let OfficialRating: String?
-    let SeasonId: String? // Added for season mapping
-    let SeriesName: String? // Parent series content title
-    let SeriesId: String? // Parent series ID
-    
-    var id: String { Id }
-    
-    var primaryImageTag: String? { ImageTags?["Primary"] }
-    var backdropImageTag: String? { BackdropImageTags?.first }
-    var logoImageTag: String? { ImageTags?["Logo"] }
-    
-    // Helper to format runtime to minutes
-    var runtimeMinutes: Int? {
-        guard let ticks = RunTimeTicks else { return nil }
-        return Int(ticks / 600_000_000)
-    }
-}
+// Note: JFViewDto, JFUserData, and JFItemDto now live in MediaComponents.swift
 
 // MARK: - ViewModels
 
@@ -320,7 +273,7 @@ struct LibraryView: View {
                                 .font(.title2.bold())
                                 .foregroundColor(.primary)
                             
-                            Text("Scan or add your user on your Admin Dashboard to access your content")
+                            Text("Scan or add your user on your Admin Dashboard to access your media library")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                                 .multilineTextAlignment(.center)
@@ -382,108 +335,8 @@ struct LibraryView: View {
     }
 }
 
-// MARK: - Horizontal Libraries Row
-
-struct HorizontalLibrariesRow: View {
-    let views: [JFViewDto]
-    @EnvironmentObject private var appState: AppState
-
-    private func rainbowColor(for index: Int) -> Color {
-        let hue = Double(index) / Double(max(views.count, 1))
-        return Color(hue: hue, saturation: 0.8, brightness: 1.0)
-    }
-    
-    private func iconFor(view: JFViewDto) -> String {
-        let type = view.CollectionType?.lowercased() ?? ""
-        if type == "movies" || view.Name.lowercased().contains("movie") { return "film" }
-        if type == "tvshows" || view.Name.lowercased().contains("tv") { return "tv" }
-        return "play.rectangle.on.rectangle" // Generic Mixed/HomeVideos Icon
-    }
-
-    var body: some View {
-        let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
-        
-        ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(alignment: .center, spacing: 8) {
-                ForEach(Array(views.enumerated()), id: \.element.id) { index, view in
-                    
-                    NavigationLink(destination: LibraryCategoryView(viewDto: view).environmentObject(appState)) {
-                        Group {
-                            // Library Image or Fallback View
-                            if let tag = view.primaryImageTag,
-                               let url = URL(string: "\(base)/Items/\(view.Id)/Images/Primary?tag=\(tag)&maxWidth=400") {
-                                CachedAsyncImage(url: url) { phase in
-                                    switch phase {
-                                    case .success(let image):
-                                        image
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fill)
-                                    case .failure, .empty:
-                                        fallbackView(for: view, index: index)
-                                    @unknown default:
-                                        fallbackView(for: view, index: index)
-                                    }
-                                }
-                            } else {
-                                fallbackView(for: view, index: index)
-                            }
-                        }
-                        .frame(width: 180, height: 104)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .accessibilityLabel(Text(view.Name))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal)
-            .frame(minHeight: 110)
-        }
-    }
-    
-    @ViewBuilder
-    private func fallbackView(for view: JFViewDto, index: Int) -> some View {
-        ZStack {
-            if #available(iOS 26.0, *) {
-                Rectangle() // The clipShape handles the cornerRadius
-                    .glassEffect(.regular.tint(rainbowColor(for: index).opacity(0.45)).interactive(), in: .rect(cornerRadius: 16.0))
-            } else {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-            }
-            
-            VStack(spacing: 8) {
-                Image(systemName: iconFor(view: view))
-                    .font(.title) // Increased icon size
-                    .foregroundColor(.white)
-                Text(view.Name)
-                    .font(.system(size: 15, weight: .bold)) // Increased text size
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 8)
-        }
-    }
-}
-
-struct DemoLibraryRowItem: View {
-    let title: String
-    let icon: String
-    
-    var body: some View {
-        HStack(spacing: 16) {
-            Image(systemName: icon)
-                .font(.title2)
-                .foregroundColor(.blue)
-                .frame(width: 32)
-            Text(title)
-                .font(.title3.weight(.medium))
-            Spacer()
-        }
-        .padding(.vertical, 8)
-    }
-}
-
 // MARK: - Generic Library Category View
+// Note: HorizontalLibrariesRow and DemoLibraryRowItem now live in MediaComponents.swift
 
 struct LibraryCategoryView: View {
     let viewDto: JFViewDto
@@ -568,68 +421,4 @@ struct LibraryCategoryView: View {
     }
 }
 
-// MARK: - Reusable Poster Card
-
-struct LibraryPosterCard: View {
-    let item: JFItemDto
-    @EnvironmentObject var appState: AppState
-    
-    var body: some View {
-        let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
-        
-        VStack(alignment: .leading, spacing: 8) {
-            Color(UIColor.secondarySystemBackground)
-                .aspectRatio(2/3, contentMode: .fit)
-                .overlay(
-                    Group {
-                        if let tag = item.primaryImageTag,
-                           let url = URL(string: "\(base)/Items/\(item.Id)/Images/Primary?tag=\(tag)&maxWidth=400") {
-                            CachedAsyncImage(url: url) { phase in
-                                switch phase {
-                                case .success(let image):
-                                    image
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                case .failure:
-                                    fallbackPlaceholder
-                                case .empty:
-                                    ProgressView()
-                                        .scaleEffect(0.8)
-                                @unknown default:
-                                    EmptyView()
-                                }
-                            }
-                        } else {
-                            fallbackPlaceholder
-                        }
-                    }
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .shadow(color: Color.black.opacity(0.12), radius: 4, x: 0, y: 2)
-            
-            Text(item.Name)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.primary)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-                .frame(height: 34, alignment: .topLeading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 4)
-        }
-    }
-    
-    @ViewBuilder
-    private var fallbackPlaceholder: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "film")
-                .font(.system(size: 24))
-                .foregroundColor(.secondary)
-            Text(item.Name)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .padding(.horizontal, 6)
-        }
-    }
-}
+// Note: LibraryPosterCard now lives in MediaComponents.swift

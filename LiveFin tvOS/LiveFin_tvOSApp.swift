@@ -2,7 +2,7 @@
 //  LiveFin_tvOSApp.swift
 //  LiveFin tvOS
 //
-//  Created by Kervens on 12/13/25.
+//  Created by KPGamingz on 12/13/25.
 //
 
 import SwiftUI

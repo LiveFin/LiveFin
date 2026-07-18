@@ -25,56 +25,6 @@ private func prefetchChannelLogos(_ channels: [LiveTvChannelDto], baseURL: Strin
 }
 #endif
 
-struct LiveTvChannelDto: Codable, Identifiable {
-    let id: String
-    let name: String?
-    let number: String?
-    let startDate: Date?
-    let endDate: Date?
-    let baseURL: String
-    var currentProgram: BaseItemDto?
-
-    var streamUrl: String { "/LiveTv/LiveStream?channelId=\(id)" }
-
-    enum CodingKeys: String, CodingKey {
-        case id = "Id"
-        case name = "Name"
-        case number = "Number"
-        case startDate = "StartDate"
-        case endDate = "EndDate"
-    }
-
-    init(id: String, name: String?, number: String?, startDate: Date?, endDate: Date?, baseURL: String) {
-        self.id = id
-        self.name = name
-        self.number = number
-        self.startDate = startDate
-        self.endDate = endDate
-        self.baseURL = baseURL
-        self.currentProgram = nil
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(String.self, forKey: .id)
-        self.name = try container.decodeIfPresent(String.self, forKey: .name)
-        self.number = try container.decodeIfPresent(String.self, forKey: .number)
-        self.startDate = try container.decodeIfPresent(Date.self, forKey: .startDate)
-        self.endDate = try container.decodeIfPresent(Date.self, forKey: .endDate)
-        self.baseURL = "YOUR_SERVER_BASE_URL"
-        self.currentProgram = nil
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id, forKey: .id)
-        try container.encodeIfPresent(name, forKey: .name)
-        try container.encodeIfPresent(number, forKey: .number)
-        try container.encodeIfPresent(startDate, forKey: .startDate)
-        try container.encodeIfPresent(endDate, forKey: .endDate)
-    }
-}
-
 struct ChannelRowView: View {
     let channel: LiveTvChannelDto
     let baseURL: String
@@ -86,8 +36,15 @@ struct ChannelRowView: View {
                 .frame(width: 50, height: 50)
                 .id(channel.id)
             VStack(alignment: .leading) {
-                Text(channel.name ?? "Unnamed Channel")
-                    .font(.headline)
+                HStack(spacing: 6) {
+                    Text(channel.name ?? "Unnamed Channel")
+                        .font(.headline)
+                    if channel.userData?.isFavorite == true {
+                        Image(systemName: "heart.fill")
+                            .foregroundColor(.red)
+                            .font(.caption)
+                    }
+                }
                 if let number = channel.number {
                     HStack(spacing: 4) {
                         Text("Channel \(number)")
@@ -119,7 +76,7 @@ struct ChannelsView: View {
     @State private var isOffline = false
     @State private var error: String?
 
-    // Natural sort helpers
+    // Natural sort helpers prioritizing favorites
     private func channelNumericComponents(_ number: String?) -> [Int] {
         guard let number, !number.isEmpty else { return [Int.max] }
         let parts = number.split { !$0.isNumber }
@@ -128,6 +85,10 @@ struct ChannelsView: View {
     }
     
     private func channelLessThan(_ a: LiveTvChannelDto, _ b: LiveTvChannelDto) -> Bool {
+        let aFav = a.userData?.isFavorite == true
+        let bFav = b.userData?.isFavorite == true
+        if aFav != bFav { return aFav }
+        
         let aNum = a.number ?? ""
         let bNum = b.number ?? ""
         let aHas = !aNum.isEmpty
@@ -157,7 +118,7 @@ struct ChannelsView: View {
                     )
                 } else if channels.isEmpty {
                     errorStateView(
-                        title: "Jellyfin Not Configured",
+                        title: "Live TV Not Configured",
                         message: "Finish setting up your Jellyfin server with Live TV fully configured on the admin dashboard",
                         icon: "server.rack"
                     )
@@ -215,9 +176,6 @@ struct ChannelsView: View {
         }
     }
 
-    struct ChannelsResponse: Codable { let items: [LiveTvChannelDto]?; enum CodingKeys: String, CodingKey { case items = "Items" } }
-    struct ProgramsResponse: Codable { let items: [BaseItemDto]?; enum CodingKeys: String, CodingKey { case items = "Items" } }
-
     func fetchChannels(force: Bool = false) async {
         guard let client = appState.client else { error = "Client not initialized"; return }
         guard !appState.accessToken.isEmpty else { error = "Access token is missing"; return }
@@ -229,8 +187,14 @@ struct ChannelsView: View {
         defer { isLoading = false }
         
         do {
-            let url = client.configuration.url.appendingPathComponent("/LiveTv/Channels")
-            var request = URLRequest(url: url)
+            var urlComponents = URLComponents(url: client.configuration.url.appendingPathComponent("/LiveTv/Channels"), resolvingAgainstBaseURL: false)
+            urlComponents?.queryItems = [
+                URLQueryItem(name: "EnableUserData", value: "true"),
+                URLQueryItem(name: "userId", value: appState.userID)
+            ]
+            
+            guard let finalUrl = urlComponents?.url else { return }
+            var request = URLRequest(url: finalUrl)
             request.httpMethod = "GET"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")

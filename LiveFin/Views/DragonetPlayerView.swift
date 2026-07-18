@@ -20,19 +20,54 @@ final class DragonetPlayerViewModel: ObservableObject {
 
     @Published var controlsVisible: Bool  = true
     @Published var isPiPActive: Bool      = false
-    @Published var isCCEnabled: Bool      = false
+    @Published var isCCEnabled: Bool      = false {
+        didSet {
+            guard oldValue != isCCEnabled else { return }
+            applyCC()
+        }
+    }
     @Published var isPlaying: Bool        = true
     @Published var isAtLiveEdge: Bool     = true
     @Published var isReloading: Bool      = false
-    @Published var isBuffering: Bool      = true // Drives the loading spinner
-    @Published var hasRenderedVideo: Bool = false // Tracks if we have a frame to show
+    @Published var isBuffering: Bool      = true
+    @Published var hasRenderedVideo: Bool = false
+    
+    @Published var disableNowPlayingUpdates: Bool = false {
+        didSet {
+            if disableNowPlayingUpdates {
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+                self.lastNowPlayingTitle = nil
+                self.lastNowPlayingImageId = nil
+            } else {
+                restoreNowPlaying()
+            }
+        }
+    }
+    
+    // Scrubber specific state for recordings
+    @Published var isRecording: Bool      = false
+    @Published var currentTime: Double    = 0
+    @Published var seekableStart: Double  = 0
+    @Published var seekableEnd: Double    = 1
+    @Published var isScrubbing: Bool      = false
+    
+    // Metadata State
+    @Published var streamURL: URL
+    @Published var channel: LiveTvChannelDto?
+    @Published var program: JFProgram?
 
     // MARK: Player
 
     private(set) var player: AVPlayer
-    private(set) var streamURL: URL
-    let channel: LiveTvChannelDto?
+    
     let appState: AppState
+    let isMultiView: Bool
+    var preventCleanupOnDeinit: Bool = false
+
+    /// MultiView-only hook: fired when this stream's playback ends or fails outright,
+    /// so the grid can drop the tile instead of leaving it stuck retrying forever.
+    /// Non-multiview playback keeps its existing "reconnect live" recovery behavior.
+    var onStreamEnded: (() -> Void)?
 
     private var timeObserver: Any?
     private var progressObserver: Any?
@@ -47,10 +82,12 @@ final class DragonetPlayerViewModel: ObservableObject {
     private var hasStartedPlayback = false
     private var lastPlaybackTime: CMTime = .invalid
 
-    init(streamURL: URL, channel: LiveTvChannelDto?, appState: AppState) {
+    init(streamURL: URL, channel: LiveTvChannelDto?, program: JFProgram? = nil, appState: AppState, isMultiView: Bool = false) {
         self.streamURL = streamURL
         self.channel   = channel
+        self.program   = program
         self.appState  = appState
+        self.isMultiView = isMultiView
 
         let userAgent = "LiveFin iOS/\(appState.clientVersion)"
         var headers: [String: String] = ["User-Agent": userAgent]
@@ -61,7 +98,6 @@ final class DragonetPlayerViewModel: ObservableObject {
         let item = AVPlayerItem(asset: asset)
         
         self.player = AVPlayer(playerItem: item)
-        // Let AVPlayer handle stalling and auto-resuming natively
         self.player.automaticallyWaitsToMinimizeStalling = true
         
         if #available(iOS 15.0, *) {
@@ -72,55 +108,171 @@ final class DragonetPlayerViewModel: ObservableObject {
             appState.startEPGPolling(for: cid)
         }
         
-        setupNowPlayingObservers()
+        if !isMultiView {
+            setupNowPlayingObservers()
+        }
+        
         setupPlaybackStateObserver()
+        setupStreamErrorRecovery()
 
         if #available(iOS 15.0, *) {
             Task {
                 _ = try? await asset.load(.duration)
                 _ = try? await asset.loadMediaSelectionGroup(for: .legible)
+                self.applyCC()
             }
         } else {
-            asset.loadValuesAsynchronously(forKeys: ["duration", "availableMediaCharacteristicsWithMediaSelectionOptions"]) { }
+            asset.loadValuesAsynchronously(forKeys: ["duration", "availableMediaCharacteristicsWithMediaSelectionOptions"]) {
+                DispatchQueue.main.async {
+                    self.applyCC()
+                }
+            }
         }
+        
+        // Ensure we automatically start playback once the item is ready
+        self.player.play()
     }
 
     deinit {
-        // 1. Capture local Sendable properties to bypass thread containment rules safely
-        let player = self.player
+        // Nothing needed here. Swift 6 Concurrency rules prevent accessing @MainActor properties here.
+        // Instead, cleanup is deterministically handled by `explicitCleanup()`
+    }
+    
+    /// Thread-safe cleanup explicitly triggered when the view disappears or is dismissed.
+    func explicitCleanup() {
+        guard !preventCleanupOnDeinit else { return }
+        
         let tObserver = timeObserver
         let pObserver = progressObserver
         let stateObserver = playbackStateObserver
         let channelId = channel?.id
         let state = appState
+        let isMulti = isMultiView
         
         let liveStreamId = URLComponents(url: self.streamURL, resolvingAgainstBaseURL: false)?
             .queryItems?.first(where: { $0.name.caseInsensitiveCompare("LiveStreamId") == .orderedSame })?.value
         let ticks = safeTicks(from: player.currentTime())
 
-        // 2. Safely perform player pause, observers invalidation and API releases on Main Queue
-        DispatchQueue.main.async {
-            player.pause()
-            
-            if let tObserver = tObserver { player.removeTimeObserver(tObserver) }
-            if let pObserver = pObserver { player.removeTimeObserver(pObserver) }
-            
-            stateObserver?.invalidate()
-            
-            if let cid = channelId {
-                state.reportPlaybackStopped(itemId: cid, positionTicks: ticks)
-                if let lsid = liveStreamId {
-                    state.closeLiveStream(liveStreamId: lsid)
-                }
-                state.stopEPGPolling()
+        player.pause()
+        
+        if let tObserver = tObserver { player.removeTimeObserver(tObserver); self.timeObserver = nil }
+        if let pObserver = pObserver { player.removeTimeObserver(pObserver); self.progressObserver = nil }
+        
+        stateObserver?.invalidate()
+        self.playbackStateObserver = nil
+        
+        if let cid = channelId {
+            state.reportPlaybackStopped(itemId: cid, positionTicks: ticks)
+            if let lsid = liveStreamId {
+                state.closeLiveStream(liveStreamId: lsid)
             }
-            
-            // Remote control event teardown
+            state.stopEPGPolling()
+        }
+        
+        if !isMulti {
             UIApplication.shared.endReceivingRemoteControlEvents()
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         }
 
         cancellables.removeAll()
+        preventCleanupOnDeinit = true
+    }
+    
+    // MARK: - Captions
+    
+    private func applyCC() {
+        guard let item = player.currentItem else { return }
+        let wantEnabled = isCCEnabled
+        
+        Task {
+            var group: AVMediaSelectionGroup?
+            if #available(iOS 15.0, *) {
+                group = try? await item.asset.loadMediaSelectionGroup(for: .legible)
+            } else {
+                group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible)
+            }
+            
+            guard let safeGroup = group else { return }
+            
+            // Double check if item is still current once the group finishes loading
+            guard self.player.currentItem == item else { return }
+            
+            let currentOption = item.currentMediaSelection.selectedMediaOption(in: safeGroup)
+            let isCurrentlyEnabled = currentOption != nil
+            
+            if wantEnabled && !isCurrentlyEnabled {
+                let locale = Locale.current
+                let options = AVMediaSelectionGroup.mediaSelectionOptions(from: safeGroup.options, with: locale)
+                if let option = options.first ?? safeGroup.options.first {
+                    item.select(option, in: safeGroup)
+                }
+            } else if !wantEnabled && isCurrentlyEnabled {
+                item.select(nil, in: safeGroup)
+            }
+        }
+    }
+    
+    // MARK: - MultiView State Hand-off
+    
+    /// Prepares this player to be adopted by another ViewModel, stripping local observers
+    /// but leaving the playback state entirely intact for seamless handoff.
+    func transferPlayer() -> AVPlayer {
+        if let tObserver = timeObserver { player.removeTimeObserver(tObserver); self.timeObserver = nil }
+        if let pObserver = progressObserver { player.removeTimeObserver(pObserver); self.progressObserver = nil }
+        
+        playbackStateObserver?.invalidate()
+        self.playbackStateObserver = nil
+        
+        preventCleanupOnDeinit = true
+        return self.player
+    }
+    
+    /// Flawlessly hijacks the playback item and metadata from a surviving MultiView stream
+    /// and elevates it into this primary controller without reloading.
+    func replaceStream(with other: DragonetPlayerViewModel) {
+        let newURL = other.streamURL
+        let newChannel = other.channel
+        let newProgram = other.program
+        
+        let newTitle = newProgram?.name ?? newChannel?.name ?? "LiveFin"
+        let newSubtitle = newProgram?.episodeTitle ?? newProgram?.overview
+        let newId = newProgram?.id ?? newChannel?.id
+        
+        // Clean our current state without destroying the other player's session
+        self.explicitCleanup()
+        self.preventCleanupOnDeinit = false
+        
+        // Seamlessly adopt the AVPlayer from the other view model
+        self.player = other.transferPlayer()
+        
+        // Adopt state
+        self.streamURL = newURL
+        self.channel = newChannel
+        self.program = newProgram
+        
+        // Update Global AppState and Metadata so UI overlay names change immediately
+        self.appState.currentProgramTitle = newTitle
+        self.appState.currentProgramSubtitle = newSubtitle
+        self.appState.currentProgramId = newId
+        self.appState.currentProgramStartDate = newProgram?.startDate
+        self.appState.currentProgramEndDate = newProgram?.endDate
+        self.appState.currentProgramIsMovie = newProgram?.isMovie ?? false
+        self.appState.currentProgramGenres = newProgram?.genres
+        
+        // Re-attach local playback reporting observers to the adopted player
+        setupPlaybackStateObserver()
+        setupStreamErrorRecovery()
+        startLiveEdgeObserver()
+        setupReportingObservers()
+        
+        self.player.isMuted = false
+        
+        if let newCid = self.channel?.id {
+            appState.startEPGPolling(for: newCid)
+            appState.reportPlaybackStart(itemId: newCid, canSeek: false)
+        }
+        
+        Task { await checkRecordingStatus() }
     }
 
     // MARK: Playback & Reporting
@@ -129,17 +281,52 @@ final class DragonetPlayerViewModel: ObservableObject {
         guard !hasStartedPlayback else { return }
         hasStartedPlayback = true
         
-        activateAudioSession()
+        if !isMultiView {
+            activateAudioSession()
+            setupRemoteCommands()
+        }
         
         player.play()
         
         startLiveEdgeObserver()
         setupReportingObservers()
-        setupRemoteCommands()
+        
+        Task { await checkRecordingStatus() }
         
         if let itemId = channel?.id {
             appState.reportPlaybackStart(itemId: itemId, canSeek: false)
             appState.reportFullClientCapabilities()
+        }
+    }
+    
+    func restoreNowPlaying() {
+        guard !disableNowPlayingUpdates else { return }
+        self.lastNowPlayingTitle = nil
+        self.lastNowPlayingImageId = nil
+        self.updateNowPlayingInfo(
+            title: appState.currentProgramTitle,
+            subtitle: appState.currentProgramSubtitle,
+            progId: appState.currentProgramId
+        )
+    }
+    
+    private func checkRecordingStatus() async {
+        guard let p = program else { return }
+        let urlStr = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
+        guard let url = URL(string: "\(urlStr)/LiveTv/Timers") else { return }
+        
+        var req = URLRequest(url: url)
+        req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(for: req)
+            struct JFQueryResult: Decodable { let Items: [JFTimer] }
+            let response = try JSONDecoder().decode(JFQueryResult.self, from: data)
+            if response.Items.contains(where: { $0.ProgramId == p.id && $0.Status == "InProgress" }) {
+                self.isRecording = true
+            }
+        } catch {
+            print("Failed to verify live recording status: \(error)")
         }
     }
 
@@ -164,27 +351,20 @@ final class DragonetPlayerViewModel: ObservableObject {
                 return
             }
 
-            // 1. Check if we've fallen completely out of the server's HLS live window
             if let seekableRange = item.seekableTimeRanges.last?.timeRangeValue {
                 let earliestAvailable = seekableRange.start
-                
-                // If our current time is older than the oldest available segment, the stream is dead.
                 if item.currentTime().seconds < earliestAvailable.seconds {
                     goToLive()
                     return
                 }
             }
             
-            // 2. Attempt to resume
             player.play()
             
-            // 3. The "Dead Session" Catch
-            // If the server killed the transcode session, AVPlayer will hang infinitely.
             Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 3_000_000_000) // 3-second grace period
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
                 guard let self = self else { return }
                 
-                // If it's still stuck buffering after 3 seconds, force a jump to the live edge.
                 if self.player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
                     self.goToLive()
                 }
@@ -200,9 +380,6 @@ final class DragonetPlayerViewModel: ObservableObject {
         hasRenderedVideo = false
         lastPlaybackTime = .invalid
         
-        // To force Emby/Jellyfin to jump to the true live edge instead of
-        // resuming its old transcode buffer, we MUST spin up a fresh session
-        // by generating a new PlaySessionId in the URL.
         var components = URLComponents(url: streamURL, resolvingAgainstBaseURL: false)
         if let queryItems = components?.queryItems {
             var newItems = queryItems.filter { $0.name.caseInsensitiveCompare("PlaySessionId") != .orderedSame }
@@ -227,6 +404,11 @@ final class DragonetPlayerViewModel: ObservableObject {
             Task {
                 _ = try? await asset.load(.duration)
                 _ = try? await asset.loadMediaSelectionGroup(for: .legible)
+                self.applyCC()
+            }
+        } else {
+            asset.loadValuesAsynchronously(forKeys: ["duration", "availableMediaCharacteristicsWithMediaSelectionOptions"]) {
+                DispatchQueue.main.async { self.applyCC() }
             }
         }
         
@@ -235,18 +417,7 @@ final class DragonetPlayerViewModel: ObservableObject {
     }
 
     func stopAndDismiss(dismiss: DismissAction) {
-        let liveStreamId = URLComponents(url: streamURL, resolvingAgainstBaseURL: false)?
-            .queryItems?.first(where: { $0.name.caseInsensitiveCompare("LiveStreamId") == .orderedSame })?.value
-        let ticks = safeTicks(from: player.currentTime())
-
-        if let itemId = channel?.id {
-            appState.reportPlaybackStopped(itemId: itemId, positionTicks: ticks)
-            if let lsid = liveStreamId {
-                appState.closeLiveStream(liveStreamId: lsid)
-            }
-            appState.stopEPGPolling()
-        }
-        
+        explicitCleanup()
         player.pause()
         player.replaceCurrentItem(with: nil)
         dismiss()
@@ -261,21 +432,22 @@ final class DragonetPlayerViewModel: ObservableObject {
             let ticks = self.safeTicks(from: player.currentTime())
             
             DispatchQueue.main.async {
-                // Determine buffering explicitly from the waiting state
                 self.isBuffering = (status == .waitingToPlayAtSpecifiedRate)
                 
-                // Tie `isPlaying` tightly to the player's core playback intent and update NowPlaying rate
                 if status == .playing {
                     self.isPlaying = true
-                    self.updateNowPlayingPlaybackState(rate: 1.0)
+                    if !self.isMultiView {
+                        self.updateNowPlayingPlaybackState(rate: 1.0)
+                    }
                 }
                 if status == .paused {
                     self.isPlaying = false
-                    self.updateNowPlayingPlaybackState(rate: 0.0)
+                    if !self.isMultiView {
+                        self.updateNowPlayingPlaybackState(rate: 0.0)
+                    }
                 }
             }
             
-            // Handle reporting seamlessly
             if let itemId = self.channel?.id {
                 let isPaused = (status == .paused)
                 Task { @MainActor in
@@ -283,6 +455,62 @@ final class DragonetPlayerViewModel: ObservableObject {
                 }
             }
         }
+    }
+    
+    private func setupStreamErrorRecovery() {
+        // If the live stream stops because it thinks it hit the end (lost connection / missed segments):
+        // in single playback, reconnect live. In MultiView, just drop the tile rather than looping forever.
+        NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] notification in
+                guard let self = self,
+                      let item = notification.object as? AVPlayerItem,
+                      item == self.player.currentItem else { return }
+                
+                if self.isMultiView {
+                    self.onStreamEnded?()
+                    return
+                }
+                
+                self.isBuffering = true
+                self.goToLive()
+            }
+            .store(in: &cancellables)
+
+        // Handle generic stream failures (like timeout loading segment)
+        NotificationCenter.default.publisher(for: .AVPlayerItemFailedToPlayToEndTime)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] notification in
+                guard let self = self,
+                      let item = notification.object as? AVPlayerItem,
+                      item == self.player.currentItem else { return }
+                
+                if self.isMultiView {
+                    self.onStreamEnded?()
+                    return
+                }
+                
+                self.isBuffering = true
+                self.goToLive()
+            }
+            .store(in: &cancellables)
+
+        // Ensure if the stream stalls out and pauses, we try kickstarting it.
+        // (Kept for MultiView too — a stall isn't necessarily a dead stream, so we still
+        // attempt to resume before giving up on the tile.)
+        NotificationCenter.default.publisher(for: .AVPlayerItemPlaybackStalled)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] notification in
+                guard let self = self,
+                      let item = notification.object as? AVPlayerItem,
+                      item == self.player.currentItem else { return }
+                
+                self.isBuffering = true
+                if self.player.timeControlStatus == .paused && self.hasStartedPlayback {
+                    self.player.play()
+                }
+            }
+            .store(in: &cancellables)
     }
 
     private func updateNowPlayingPlaybackState(rate: Float) {
@@ -308,9 +536,10 @@ final class DragonetPlayerViewModel: ObservableObject {
     }
 
     private func updateNowPlayingInfo(title: String?, subtitle: String?, progId: String?) {
+        guard !disableNowPlayingUpdates else { return }
         guard let item = player.currentItem else { return }
         
-        let displayTitle = title ?? channel?.name ?? "Live TV"
+        let displayTitle = title ?? channel?.name ?? "LiveFin"
         let displaySub = subtitle ?? ""
         let targetId = progId ?? channel?.id
         
@@ -331,14 +560,12 @@ final class DragonetPlayerViewModel: ObservableObject {
         metadataItems.append(titleItem)
         
         if !displaySub.isEmpty {
-            // For AVPlayer, the system maps 'Artist' to the subtitle line in Now Playing UI
             let artistItem = AVMutableMetadataItem()
             artistItem.identifier = .commonIdentifierArtist
             artistItem.value = displaySub as NSString
             artistItem.extendedLanguageTag = "und"
             metadataItems.append(artistItem)
             
-            // Keep description as a fallback
             let descItem = AVMutableMetadataItem()
             descItem.identifier = .commonIdentifierDescription
             descItem.value = displaySub as NSString
@@ -376,7 +603,6 @@ final class DragonetPlayerViewModel: ObservableObject {
         
         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
             guard let data = data, let image = UIImage(data: data), let pngData = image.pngData() else { return }
-            // Copy metadata to avoid capturing the original non-Sendable array across threads
             let safeMetadata = currentMetadata
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
@@ -430,7 +656,6 @@ final class DragonetPlayerViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 if self.lastPlaybackTime.isValid && time != self.lastPlaybackTime {
-                    // We've successfully advanced time, meaning a frame is rendered.
                     if !self.hasRenderedVideo {
                         self.hasRenderedVideo = true
                     }
@@ -458,22 +683,29 @@ final class DragonetPlayerViewModel: ObservableObject {
     }
 
     private func checkLiveEdge() {
-        guard let item = player.currentItem else { isAtLiveEdge = true; return }
-        guard let last = item.seekableTimeRanges.last?.timeRangeValue else {
+        guard let item = player.currentItem else {
             isAtLiveEdge = true
             return
         }
-        let edgeTime    = last.end
-        let currentTime = item.currentTime()
-        let lag         = edgeTime.seconds - currentTime.seconds
-        isAtLiveEdge = lag < 10
+        if let last = item.seekableTimeRanges.last?.timeRangeValue {
+            seekableStart = last.start.seconds
+            seekableEnd = last.end.seconds
+            
+            let lag = seekableEnd - item.currentTime().seconds
+            isAtLiveEdge = lag < 10
+            
+            if !isScrubbing {
+                currentTime = item.currentTime().seconds
+            }
+        } else {
+            isAtLiveEdge = true
+        }
     }
 
     // MARK: - Helpers
 
     nonisolated private func safeTicks(from time: CMTime) -> Int64 {
         let seconds = CMTimeGetSeconds(time)
-        // Ensure the value is finite and not NaN before casting to Int64
         guard seconds.isFinite && !seconds.isNaN else { return 0 }
         return Int64(seconds * 10_000_000)
     }
@@ -485,6 +717,7 @@ struct DragonetPlayerModifier: ViewModifier {
     @Binding var isPresented: Bool
     let streamURL: URL?
     let channel: LiveTvChannelDto?
+    let program: JFProgram?
     let onPlaybackError: ((String) -> Void)?
     
     @EnvironmentObject var appState: AppState
@@ -496,9 +729,13 @@ struct DragonetPlayerModifier: ViewModifier {
                     DragonetPlayerView(
                         streamURL: url,
                         channel: channel,
+                        program: program,
                         appState: appState,
                         onPlaybackError: onPlaybackError
                     )
+                    .environmentObject(appState)
+                } else {
+                    Color.black.ignoresSafeArea()
                 }
             }
     }
@@ -509,12 +746,14 @@ extension View {
         isPresented: Binding<Bool>,
         streamURL: URL?,
         channel: LiveTvChannelDto? = nil,
+        program: JFProgram? = nil,
         onPlaybackError: ((String) -> Void)? = nil
     ) -> some View {
         self.modifier(DragonetPlayerModifier(
             isPresented: isPresented,
             streamURL: streamURL,
             channel: channel,
+            program: program,
             onPlaybackError: onPlaybackError
         ))
     }
@@ -528,20 +767,46 @@ struct DragonetPlayerView: View {
     @Environment(\.dismiss) private var dismiss
     
     @StateObject private var vm: DragonetPlayerViewModel
+    
     @State private var playerController: DragonetPlayerController?
+    
+    @State private var showMultiView = false
+    @State private var showAddChannelSheet = false
+    @State private var multiVM: DragonetMultiViewModel?
+    @State private var isTransitioningToMultiView = false
 
     let streamURL: URL
     let channel: LiveTvChannelDto?
+    let program: JFProgram?
     let onPlaybackError: ((String) -> Void)?
 
-    init(streamURL: URL, channel: LiveTvChannelDto?, appState: AppState, onPlaybackError: ((String) -> Void)? = nil) {
-        
+    init(streamURL: URL, channel: LiveTvChannelDto?, program: JFProgram? = nil, appState: AppState, onPlaybackError: ((String) -> Void)? = nil) {
         AppDelegate.orientationLock = .landscape
-        
         self.streamURL = streamURL
         self.channel = channel
+        self.program = program
         self.onPlaybackError = onPlaybackError
-        _vm = StateObject(wrappedValue: DragonetPlayerViewModel(streamURL: streamURL, channel: channel, appState: appState))
+        _vm = StateObject(wrappedValue: DragonetPlayerViewModel(streamURL: streamURL, channel: channel, program: program, appState: appState))
+    }
+
+    var effectiveProgram: JFProgram? {
+        if let p = vm.program { return p }
+        let id = appState.currentProgramId ?? "manual_\(vm.channel?.id ?? UUID().uuidString)"
+        var dict: [String: Any] = [:]
+        dict["Id"] = id
+        dict["Name"] = appState.currentProgramTitle ?? vm.channel?.name ?? "LiveFin"
+        
+        if let cid = vm.channel?.id { dict["ChannelId"] = cid }
+        if let cname = vm.channel?.name { dict["ChannelName"] = cname }
+        
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime]
+        if let s = appState.currentProgramStartDate { dict["StartDate"] = iso.string(from: s) }
+        if let e = appState.currentProgramEndDate { dict["EndDate"] = iso.string(from: e) }
+        dict["IsMovie"] = appState.currentProgramIsMovie ?? false
+        if let genres = appState.currentProgramGenres { dict["Genres"] = genres }
+        
+        return JFProgram(json: dict)
     }
 
     var body: some View {
@@ -551,29 +816,77 @@ struct DragonetPlayerView: View {
             makePlayer()
                 .ignoresSafeArea()
 
-            // Buffer Background Image Overlay (Shows ONLY when blacked out)
             bufferImageOverlay
                 .zIndex(1)
                 .allowsHitTesting(false)
                 .opacity(!vm.hasRenderedVideo ? 1 : 0)
                 .animation(.easeInOut(duration: 0.4), value: vm.hasRenderedVideo)
 
-            // Spinner (Shows anytime it buffers)
             spinnerOverlay
                 .zIndex(2)
                 .allowsHitTesting(false)
                 .opacity(vm.isBuffering ? 1 : 0)
                 .animation(.easeInOut(duration: 0.2), value: vm.isBuffering)
 
-            // Fade Controls
             landscapeOverlay
                 .zIndex(3)
                 .opacity(vm.controlsVisible ? 1 : 0)
                 .allowsHitTesting(vm.controlsVisible)
         }
+        .sheet(isPresented: $showAddChannelSheet) {
+            let activeIds = [vm.channel?.id].compactMap { $0 }
+            MultiViewChannelPickerView(appState: appState, activeChannelIds: activeIds) { url, channel, program in
+                if self.multiVM == nil {
+                    let manager = DragonetMultiViewModel(appState: appState)
+                    manager.adoptStream(self.vm)
+                    self.multiVM = manager
+                }
+                self.multiVM?.addStream(url: url, channel: channel, program: program)
+                self.showMultiView = true
+            }
+        }
+        .fullScreenCover(isPresented: $showMultiView, onDismiss: {
+            if let manager = multiVM {
+                // Determine which stream to keep
+                let streamToKeep: DragonetPlayerViewModel?
+                if let explicitlySelected = manager.selectedStreamToKeep {
+                    streamToKeep = explicitlySelected
+                } else {
+                    let focusIndex = manager.activeAudioIndex
+                    streamToKeep = manager.activeStreams.indices.contains(focusIndex) ? manager.activeStreams[focusIndex] : manager.activeStreams.first
+                }
+                
+                manager.selectedStreamToKeep = streamToKeep
+                
+                // ONLY replace metadata and player if it's a completely different stream object
+                if let remaining = streamToKeep, remaining !== vm {
+                    vm.replaceStream(with: remaining)
+                }
+            }
+            
+            vm.player.isMuted = false
+            if vm.isPlaying {
+                vm.player.play()
+            }
+            
+            self.multiVM?.cleanup()
+            self.multiVM = nil
+        }) {
+            if let manager = multiVM {
+                DragonetMultiView(multiVM: manager)
+                    .environmentObject(appState)
+            } else {
+                Color.black.ignoresSafeArea()
+            }
+        }
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
+        .onChange(of: showMultiView) { newValue in
+            isTransitioningToMultiView = newValue
+            vm.disableNowPlayingUpdates = newValue
+        }
         .onAppear {
+            isTransitioningToMultiView = false
             vm.startPlayback()
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -583,9 +896,13 @@ struct DragonetPlayerView: View {
             }
         }
         .onDisappear {
-            AppDelegate.orientationLock = .portrait
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
-                windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+            // Guard to protect against orientation lock breakage when moving inside multiview grid
+            if !isTransitioningToMultiView {
+                AppDelegate.orientationLock = .portrait
+                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+                    windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+                }
+                vm.explicitCleanup()
             }
         }
         .onChange(of: vm.controlsVisible) { _, visible in
@@ -600,10 +917,8 @@ struct DragonetPlayerView: View {
         ZStack {
             Color.black.ignoresSafeArea()
             
-            if let targetId = appState.currentProgramId ?? channel?.id {
+            if let targetId = appState.currentProgramId ?? vm.channel?.id {
                 let server = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
-                
-                // Directly format URL to force a max width & top quality for high-resolution 1080p rendering
                 let urlString = "\(server)/Items/\(targetId)/Images/Primary?api_key=\(appState.accessToken)&maxWidth=1920&quality=100"
                 
                 AsyncImage(url: URL(string: urlString)) { phase in
@@ -615,7 +930,6 @@ struct DragonetPlayerView: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                     case .failure:
-                        // Fallback gracefully just in case
                         ChannelImageView(
                             baseUrl: appState.serverURL,
                             apiKey: appState.accessToken,
@@ -626,6 +940,7 @@ struct DragonetPlayerView: View {
                         EmptyView()
                     }
                 }
+                .id(urlString)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea()
                 .opacity(0.3)
@@ -676,21 +991,21 @@ struct DragonetPlayerView: View {
     
     private var landscapeOverlay: some View {
         VStack(spacing: 0) {
-            // ── Top Action Bar ──
             HStack(alignment: .top) {
                 HStack(spacing: 16) {
-                    if let cid = channel?.id {
+                    if let cid = vm.channel?.id {
                         ChannelImageView(
                             baseUrl: appState.serverURL,
                             apiKey: appState.accessToken,
                             channelId: cid
                         )
+                        .id(cid)
                         .frame(width: 50, height: 50)
                         .shadow(radius: 4)
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(appState.currentProgramTitle ?? vm.channel?.name ?? "Live TV")
+                        Text(appState.currentProgramTitle ?? vm.channel?.name ?? "LiveFin")
                             .font(.title3.bold())
                             .foregroundStyle(.white)
                             .shadow(radius: 2)
@@ -711,7 +1026,14 @@ struct DragonetPlayerView: View {
                 Spacer()
 
                 HStack(spacing: 12) {
+                    
+                    if let effProg = effectiveProgram {
+                        DragonetRecordingButtons(program: effProg, appState: appState)
+                            .id(appState.currentProgramId ?? vm.channel?.id ?? UUID().uuidString)
+                    }
+                    
                     ccButton
+                    multiViewButton
                     pipButton
                     airplayButton
                     closeButton
@@ -734,12 +1056,18 @@ struct DragonetPlayerView: View {
 
             Spacer()
 
-            // ── Bottom Playback Bar ──
             HStack(spacing: 24) {
                 playPauseButton
+                
                 liveBadge
+                
+                if vm.isRecording {
+                    scrubberView
+                } else {
+                    Spacer()
+                }
             }
-            .padding(.leading, 40)
+            .padding(.horizontal, 40)
             .padding(.bottom, 16)
             .safeAreaPadding(.horizontal)
             .safeAreaPadding(.bottom)
@@ -808,6 +1136,49 @@ struct DragonetPlayerView: View {
             .glassEffect(in: Capsule())
         }
     }
+    
+    private var scrubberView: some View {
+        HStack(spacing: 12) {
+            Text(formatTime(vm.currentTime - vm.seekableStart))
+                .font(.caption.monospacedDigit())
+                .foregroundColor(.white)
+            
+            let rangeStart = max(vm.seekableStart, 0)
+            let rangeEnd = max(vm.seekableEnd, rangeStart + 1)
+            
+            Slider(value: Binding(
+                get: { max(min(vm.currentTime, rangeEnd), rangeStart) },
+                set: { val in vm.currentTime = val }
+            ), in: rangeStart...rangeEnd) { editing in
+                vm.isScrubbing = editing
+                if !editing {
+                    vm.player.seek(to: CMTime(seconds: vm.currentTime, preferredTimescale: 600))
+                    playerController?.resetAutoHideTimer()
+                }
+            }
+            .tint(.red)
+            
+            Text("-" + formatTime(vm.seekableEnd - vm.currentTime))
+                .font(.caption.monospacedDigit())
+                .foregroundColor(.white)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .glassEffect(in: Capsule())
+        .frame(maxWidth: .infinity)
+    }
+    
+    private func formatTime(_ seconds: Double) -> String {
+        guard seconds > 0 && seconds.isFinite else { return "00:00" }
+        let min = Int(seconds) / 60
+        let sec = Int(seconds) % 60
+        if min > 59 {
+            let hr = min / 60
+            let m = min % 60
+            return String(format: "%d:%02d:%02d", hr, m, sec)
+        }
+        return String(format: "%02d:%02d", min, sec)
+    }
 
     private var ccButton: some View {
         Button {
@@ -816,6 +1187,19 @@ struct DragonetPlayerView: View {
         } label: {
             Image(systemName: vm.isCCEnabled ? "captions.bubble.fill" : "captions.bubble")
                 .foregroundStyle(vm.isCCEnabled ? Color.blue : .white)
+                .font(.system(size: 18, weight: .medium))
+                .frame(width: 44, height: 44)
+        }
+        .glassEffect(in: Circle())
+    }
+
+    private var multiViewButton: some View {
+        Button {
+            playerController?.cancelTimer()
+            self.showAddChannelSheet = true
+        } label: {
+            Image(systemName: "square.grid.2x2")
+                .foregroundStyle(.white)
                 .font(.system(size: 18, weight: .medium))
                 .frame(width: 44, height: 44)
         }
@@ -849,6 +1233,36 @@ struct DragonetPlayerView: View {
                 .frame(width: 44, height: 44)
         }
         .glassEffect(in: Circle())
+    }
+}
+
+// MARK: - Recording Actions View
+
+struct DragonetRecordingButtons: View {
+    @StateObject var recordingViewModel: ProgramRecordingViewModel
+    @State private var showRecordingSheet = false
+    
+    init(program: JFProgram, appState: AppState) {
+        _recordingViewModel = StateObject(wrappedValue: ProgramRecordingViewModel(program: program, appState: appState))
+    }
+    
+    var body: some View {
+        Button {
+            showRecordingSheet = true
+        } label: {
+            Image(systemName: recordingViewModel.isRecordingScheduled == true ? "record.circle.fill" : "record.circle")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(recordingViewModel.isRecordingScheduled == true ? Color.red : .white)
+                .frame(width: 44, height: 44)
+                .background(recordingViewModel.isRecordingScheduled == true ? Color.red.opacity(0.4) : Color.clear)
+        }
+        .glassEffect(in: Circle())
+        .sheet(isPresented: $showRecordingSheet) {
+            RecordingConfigurationView(viewModel: recordingViewModel)
+        }
+        .onAppear {
+            recordingViewModel.checkPendingNotifications()
+        }
     }
 }
 

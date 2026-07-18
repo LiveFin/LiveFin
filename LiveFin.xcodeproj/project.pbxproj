@@ -76,17 +76,28 @@
 			);
 			target = EBCC8A0B2DA88899003DF1A6 /* LiveFin */;
 		};
-		EB18D7DB2FF2FEEA001123BC /* Exceptions for "Shared" folder in "LiveFin Watch App" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Components/DemoMode/DemoChannel.swift,
-			);
-			target = EBE19BBF2F058A7A00C21C63 /* LiveFin Watch App */;
-		};
 		EB18D7DC2FF2FEEB001123BC /* Exceptions for "Shared" folder in "LiveFin tvOS" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Components/DemoMode/DemoChannel.swift,
+				Components/Guide/GuideViewComponents.swift,
+				Components/Home/HomeViewComponents.swift,
+				Components/Image/ProgramImage.swift,
+				Components/Library/MediaComponents.swift,
+				"Components/Live TV Programs/ProgramViewComponents.swift",
+				Components/MediaInfo/OpenLiveStreamService.swift,
+				Components/MediaInfo/PlaybackInfoService.swift,
+				Components/Recording/NotificationManager.swift,
+				Components/Recording/ProgramRecordingViewModel.swift,
+				Components/Recording/RecordingConfiguration.swift,
+				Components/Recording/RecordingsViewModel.swift,
+			);
+			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
+		};
+		EBA77905300B35D000F3262F /* Exceptions for "LiveFin" folder in "LiveFin tvOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				App/KeychainHelper.swift,
 			);
 			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
 		};
@@ -96,7 +107,6 @@
 		EB130A632EDB353D00381D60 /* Shared */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				EB18D7DB2FF2FEEA001123BC /* Exceptions for "Shared" folder in "LiveFin Watch App" target */,
 				EB18D7DC2FF2FEEB001123BC /* Exceptions for "Shared" folder in "LiveFin tvOS" target */,
 			);
 			path = Shared;
@@ -114,13 +124,14 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				EB18D7D02FF2F8B3001123BC /* Exceptions for "LiveFin" folder in "LiveFin" target */,
+				EBA77905300B35D000F3262F /* Exceptions for "LiveFin" folder in "LiveFin tvOS" target */,
 			);
 			path = LiveFin;
 			sourceTree = "<group>";
 		};
-		EBE19BC12F058A7A00C21C63 /* LIveFin Watch App */ = {
+		EBE19BC12F058A7A00C21C63 /* LiveFin Watch App */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "LIveFin Watch App";
+			path = "LiveFin Watch App";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -173,7 +184,7 @@
 			isa = PBXGroup;
 			children = (
 				EBCC8A0E2DA88899003DF1A6 /* LiveFin */,
-				EBE19BC12F058A7A00C21C63 /* LIveFin Watch App */,
+				EBE19BC12F058A7A00C21C63 /* LiveFin Watch App */,
 				EB15E79E2EED2DCF00A778BD /* LiveFin tvOS */,
 				EB130A632EDB353D00381D60 /* Shared */,
 				EBCC8A0D2DA88899003DF1A6 /* Products */,
@@ -304,8 +315,7 @@
 				EB18D7D82FF2FE02001123BC /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				EB130A632EDB353D00381D60 /* Shared */,
-				EBE19BC12F058A7A00C21C63 /* LIveFin Watch App */,
+				EBE19BC12F058A7A00C21C63 /* LiveFin Watch App */,
 			);
 			name = "LiveFin Watch App";
 			packageProductDependencies = (
@@ -679,13 +689,14 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = LiveFin/LiveFin.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 44;
+				CURRENT_PROJECT_VERSION = 47;
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = LiveFin/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "$(PRODUCT_NAME)";
+				INFOPLIST_KEY_CFBundleDisplayName = LiveFin;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app requires access to the local network to connect to your Jellyfin server.";
@@ -699,9 +710,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.3.1;
+				MARKETING_VERSION = 2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.kpgamingz.LiveFin;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -715,13 +727,14 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = LiveFin/LiveFin.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 44;
+				CURRENT_PROJECT_VERSION = 47;
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = LiveFin/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "$(PRODUCT_NAME)";
+				INFOPLIST_KEY_CFBundleDisplayName = LiveFin;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app requires access to the local network to connect to your Jellyfin server.";
@@ -735,9 +748,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.3.1;
+				MARKETING_VERSION = 2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.kpgamingz.LiveFin;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -825,7 +839,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -837,7 +851,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.3.1;
+				MARKETING_VERSION = 2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.kpgamingz.LiveFin.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -863,7 +877,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -875,7 +889,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.3.1;
+				MARKETING_VERSION = 2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.kpgamingz.LiveFin.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
