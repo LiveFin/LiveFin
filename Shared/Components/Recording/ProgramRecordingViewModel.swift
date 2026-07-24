@@ -283,6 +283,7 @@ final class ProgramRecordingViewModel: ObservableObject {
     // MARK: - Device Local Notifications
     
     func scheduleLocalNotification() async {
+        #if os(iOS)
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         
@@ -395,9 +396,11 @@ final class ProgramRecordingViewModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 500_000_000)
             self.checkPendingNotifications()
         }
+        #endif
     }
     
     private func scheduleSingleNotification(for p: JFProgram, center: UNUserNotificationCenter) async {
+        #if os(iOS)
         if notificationConfig.notifyNewEpisodesOnly && !(p.isNew ?? false) {
             return
         }
@@ -475,9 +478,11 @@ final class ProgramRecordingViewModel: ObservableObject {
             let request = UNNotificationRequest(identifier: uniqueId, content: content, trigger: trigger)
             try? await center.add(request)
         }
+        #endif
     }
     
     func scheduleFinishNotification() async {
+        #if os(iOS)
         var finishTriggerDate: Date? = nil
         
         // Fetch accurate Timer EndDate from the server to handle EPG alterations
@@ -516,9 +521,11 @@ final class ProgramRecordingViewModel: ObservableObject {
         let uniqueId = "recording_finish_\(program.id)_\(UUID().uuidString)"
         let request = UNNotificationRequest(identifier: uniqueId, content: content, trigger: trigger)
         try? await center.add(request)
+        #endif
     }
     
     func cancelLocalNotification() {
+        #if os(iOS)
         let center = UNUserNotificationCenter.current()
         center.getPendingNotificationRequests { [weak self] requests in
             guard let self = self else { return }
@@ -553,9 +560,11 @@ final class ProgramRecordingViewModel: ObservableObject {
         }
         // Optimistically set to false
         self.hasNotificationScheduled = false
+        #endif
     }
     
     func checkPendingNotifications() {
+        #if os(iOS)
         UNUserNotificationCenter.current().getPendingNotificationRequests { [weak self] requests in
             guard let self = self else { return }
             
@@ -584,16 +593,13 @@ final class ProgramRecordingViewModel: ObservableObject {
             }
             
             Task { @MainActor in
-                // CRITICAL FIX: Only light up the Bell if THIS SPECIFIC episode is pending.
-                // Previously, it lit up for any episode in the series, prompting users to click
-                // 'Remove Reminder' on a live episode, unintentionally wiping all future episodes.
                 self.hasNotificationScheduled = hasThisProgram
                 
-                // If any episode in the series is scheduled as a series reminder, reflect that in the toggle UI
                 if hasSeriesScheduled {
                     self.notificationConfig.notifySeries = true
                 }
             }
         }
+        #endif
     }
 }

@@ -6,16 +6,17 @@
 //
 
 import SwiftUI
-import CoreData
 
 @main
 struct LiveFin_tvOSApp: App {
-    let persistenceController = PersistenceController.shared
+    // 1. Initialize your shared, unified AppState
+    @StateObject private var appState = AppState()
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environment(\.managedObjectContext, persistenceController.container.viewContext)
+            // 2. Launch your custom TVRootView instead of the CoreData ContentView
+            TVRootView()
+                .environmentObject(appState)
         }
     }
 }

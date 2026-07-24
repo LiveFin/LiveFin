@@ -1,7 +1,28 @@
 import SwiftUI
+import Combine
+@preconcurrency import JellyfinAPI
+
 #if os(iOS)
 import UIKit
 #endif
+
+// MARK: - Cross-Platform UI Colors
+extension Color {
+    static var platformTertiaryFill: Color {
+        #if os(tvOS)
+        return Color.gray.opacity(0.2)
+        #else
+        return Color(UIColor.tertiarySystemFill)
+        #endif
+    }
+    static var platformSecondaryBackground: Color {
+        #if os(tvOS)
+        return Color.gray.opacity(0.1)
+        #else
+        return Color(UIColor.secondarySystemBackground)
+        #endif
+    }
+}
 
 // MARK: - Stream URL Item
 
@@ -154,6 +175,9 @@ final class ProgramViewModel: ObservableObject {
     @Published var streamItem: StreamURLItem? = nil
     @Published var playbackErrorMessage: String? = nil
 
+    // Notifications
+    @Published var scheduledNotificationCount: Int = 0
+
     // Pagination specific variables
     @Published var isLoadingMoreUpcoming: Bool = false
     @Published var hasMoreUpcoming: Bool = true
@@ -248,6 +272,42 @@ final class ProgramViewModel: ObservableObject {
         )
     }
 
+    /// Groups all airings of the same program/series under one cancelable bucket,
+    /// falling back to a normalized title when there's no seriesId (e.g. movies, news).
+    var notificationGroupKey: String {
+        if let sid = program.seriesId, !sid.isEmpty { return "series.\(sid)" }
+        let title = program.seriesName?.isEmpty == false ? program.seriesName! : program.name
+        return "title.\(normTitle(title))"
+    }
+
+    func refreshScheduledNotificationCount() {
+        #if os(iOS)
+        scheduledNotificationCount = NotificationManager.shared.pendingCount(for: notificationGroupKey)
+        #else
+        scheduledNotificationCount = 0
+        #endif
+    }
+
+    #if os(iOS)
+    func scheduleNotificationsForUpcoming(config: NotificationConfiguration) async {
+        var airings = displayedUpcoming
+        if let start = program.startDate, start > Date() {
+            airings.append(program)
+        }
+        let count = await NotificationManager.shared.scheduleNotifications(
+            for: airings, groupKey: notificationGroupKey, config: config
+        )
+        scheduledNotificationCount = count
+    }
+    #endif
+
+    func cancelAllNotifications() {
+        #if os(iOS)
+        NotificationManager.shared.cancelAllNotifications(for: notificationGroupKey)
+        #endif
+        scheduledNotificationCount = 0
+    }
+
     func onAppear() {
         if resolvedChannelName == nil {
             if let explicit = program.channelName, !explicit.isEmpty {
@@ -271,6 +331,7 @@ final class ProgramViewModel: ObservableObject {
 
         await ensureProgramDetails()
         await ensureChannelName()
+        refreshScheduledNotificationCount()
         
         // Let's populate the initial batch of upcoming first to fall back onto if necessary
         await fetchNextUpcomingPage()
@@ -710,14 +771,14 @@ struct UpcomingSkeletonRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color(UIColor.tertiarySystemFill))
+                .fill(Color.platformTertiaryFill)
                 .frame(width: 44, height: 44)
             VStack(alignment: .leading, spacing: 8) {
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(UIColor.tertiarySystemFill))
+                    .fill(Color.platformTertiaryFill)
                     .frame(width: 160, height: 14)
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(UIColor.tertiarySystemFill))
+                    .fill(Color.platformTertiaryFill)
                     .frame(width: 100, height: 11)
             }
             Spacer()
@@ -736,7 +797,7 @@ struct UpcomingSkeletonView: View {
                 Divider().padding(.leading, 8)
             }
         }
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color(UIColor.secondarySystemBackground)))
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.platformSecondaryBackground))
     }
 }
 
@@ -750,13 +811,13 @@ struct RelatedSkeletonView: View {
                 ForEach(0..<4, id: \.self) { _ in
                     VStack(alignment: .leading, spacing: 6) {
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(UIColor.tertiarySystemFill))
+                            .fill(Color.platformTertiaryFill)
                             .frame(width: cardWidth, height: cardHeight)
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(Color(UIColor.tertiarySystemFill))
+                            .fill(Color.platformTertiaryFill)
                             .frame(width: cardWidth * 0.7, height: 11)
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(Color(UIColor.tertiarySystemFill))
+                            .fill(Color.platformTertiaryFill)
                             .frame(width: cardWidth * 0.5, height: 10)
                     }
                     .redacted(reason: .placeholder)
@@ -777,6 +838,36 @@ struct LiveBadge: View {
         }
     }
 }
+
+#if os(iOS)
+struct NotifyMeButton: View {
+    @ObservedObject var viewModel: ProgramViewModel
+    var config: NotificationConfiguration = NotificationConfiguration()
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button {
+                Task { await viewModel.scheduleNotificationsForUpcoming(config: config) }
+            } label: {
+                Label(
+                    viewModel.scheduledNotificationCount > 0
+                        ? "Update Reminders (\(viewModel.scheduledNotificationCount))"
+                        : "Notify Me",
+                    systemImage: "bell"
+                )
+            }
+
+            if viewModel.scheduledNotificationCount > 0 {
+                Button(role: .destructive) {
+                    viewModel.cancelAllNotifications()
+                } label: {
+                    Label("Cancel All", systemImage: "bell.slash")
+                }
+            }
+        }
+    }
+}
+#endif
 
 struct UpcomingProgramRow: View {
     let program: JFProgram
@@ -951,7 +1042,7 @@ struct RelatedProgramCard: View {
                 if loadImages, let url = imageURL() {
                     AsyncImage(url: url) { phase in
                         switch phase {
-                        case .empty: ZStack { Color(UIColor.secondarySystemBackground); ProgressView() }
+                        case .empty: ZStack { Color.platformSecondaryBackground; ProgressView() }
                         case .success(let img):
                             ZStack {
                                 // 1. Blurred background filling the box
@@ -981,7 +1072,7 @@ struct RelatedProgramCard: View {
         .frame(width: imageWidth)
     }
     private var placeholder: some View {
-        ZStack { Color(UIColor.secondarySystemBackground); Image(systemName: "film").foregroundColor(.secondary) }
+        ZStack { Color.platformSecondaryBackground; Image(systemName: "film").foregroundColor(.secondary) }
     }
     private func imageURL() -> URL? {
         guard !appState.serverURL.isEmpty, !appState.apiKey.isEmpty else { return nil }
@@ -1035,7 +1126,7 @@ struct ProgramDetailImage: View {
                     case .empty:
                         ZStack { ProgressView() }
                             .frame(width: geo.size.width, height: geo.size.height)
-                            .background(Color(UIColor.secondarySystemBackground))
+                            .background(Color.platformSecondaryBackground)
                     case .success(let img):
                         ZStack {
                             // 1. Massive blurred background for the main header poster
@@ -1062,7 +1153,7 @@ struct ProgramDetailImage: View {
     }
     private var placeholder: some View {
         ZStack { Image(systemName: "film").imageScale(.large).foregroundColor(.secondary) }
-            .background(Color(UIColor.secondarySystemBackground))
+            .background(Color.platformSecondaryBackground)
     }
     private func imageURL(maxWidth: Int = 800) -> URL? {
         guard !appState.serverURL.isEmpty, !appState.apiKey.isEmpty else { return nil }

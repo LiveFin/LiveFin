@@ -66,7 +66,6 @@ final class DragonetPlayerViewModel: ObservableObject {
 
     /// MultiView-only hook: fired when this stream's playback ends or fails outright,
     /// so the grid can drop the tile instead of leaving it stuck retrying forever.
-    /// Non-multiview playback keeps its existing "reconnect live" recovery behavior.
     var onStreamEnded: (() -> Void)?
 
     private var timeObserver: Any?
@@ -134,8 +133,7 @@ final class DragonetPlayerViewModel: ObservableObject {
     }
 
     deinit {
-        // Nothing needed here. Swift 6 Concurrency rules prevent accessing @MainActor properties here.
-        // Instead, cleanup is deterministically handled by `explicitCleanup()`
+        // Handled deterministically by `explicitCleanup()`
     }
     
     /// Thread-safe cleanup explicitly triggered when the view disappears or is dismissed.
@@ -194,7 +192,6 @@ final class DragonetPlayerViewModel: ObservableObject {
             
             guard let safeGroup = group else { return }
             
-            // Double check if item is still current once the group finishes loading
             guard self.player.currentItem == item else { return }
             
             let currentOption = item.currentMediaSelection.selectedMediaOption(in: safeGroup)
@@ -227,8 +224,6 @@ final class DragonetPlayerViewModel: ObservableObject {
         return self.player
     }
     
-    /// Flawlessly hijacks the playback item and metadata from a surviving MultiView stream
-    /// and elevates it into this primary controller without reloading.
     func replaceStream(with other: DragonetPlayerViewModel) {
         let newURL = other.streamURL
         let newChannel = other.channel
@@ -238,19 +233,15 @@ final class DragonetPlayerViewModel: ObservableObject {
         let newSubtitle = newProgram?.episodeTitle ?? newProgram?.overview
         let newId = newProgram?.id ?? newChannel?.id
         
-        // Clean our current state without destroying the other player's session
         self.explicitCleanup()
         self.preventCleanupOnDeinit = false
         
-        // Seamlessly adopt the AVPlayer from the other view model
         self.player = other.transferPlayer()
         
-        // Adopt state
         self.streamURL = newURL
         self.channel = newChannel
         self.program = newProgram
         
-        // Update Global AppState and Metadata so UI overlay names change immediately
         self.appState.currentProgramTitle = newTitle
         self.appState.currentProgramSubtitle = newSubtitle
         self.appState.currentProgramId = newId
@@ -259,7 +250,6 @@ final class DragonetPlayerViewModel: ObservableObject {
         self.appState.currentProgramIsMovie = newProgram?.isMovie ?? false
         self.appState.currentProgramGenres = newProgram?.genres
         
-        // Re-attach local playback reporting observers to the adopted player
         setupPlaybackStateObserver()
         setupStreamErrorRecovery()
         startLiveEdgeObserver()
@@ -458,8 +448,6 @@ final class DragonetPlayerViewModel: ObservableObject {
     }
     
     private func setupStreamErrorRecovery() {
-        // If the live stream stops because it thinks it hit the end (lost connection / missed segments):
-        // in single playback, reconnect live. In MultiView, just drop the tile rather than looping forever.
         NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] notification in
@@ -477,7 +465,6 @@ final class DragonetPlayerViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Handle generic stream failures (like timeout loading segment)
         NotificationCenter.default.publisher(for: .AVPlayerItemFailedToPlayToEndTime)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] notification in
@@ -495,9 +482,6 @@ final class DragonetPlayerViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Ensure if the stream stalls out and pauses, we try kickstarting it.
-        // (Kept for MultiView too — a stall isn't necessarily a dead stream, so we still
-        // attempt to resume before giving up on the tile.)
         NotificationCenter.default.publisher(for: .AVPlayerItemPlaybackStalled)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] notification in
@@ -847,7 +831,6 @@ struct DragonetPlayerView: View {
         }
         .fullScreenCover(isPresented: $showMultiView, onDismiss: {
             if let manager = multiVM {
-                // Determine which stream to keep
                 let streamToKeep: DragonetPlayerViewModel?
                 if let explicitlySelected = manager.selectedStreamToKeep {
                     streamToKeep = explicitlySelected
@@ -858,7 +841,6 @@ struct DragonetPlayerView: View {
                 
                 manager.selectedStreamToKeep = streamToKeep
                 
-                // ONLY replace metadata and player if it's a completely different stream object
                 if let remaining = streamToKeep, remaining !== vm {
                     vm.replaceStream(with: remaining)
                 }
@@ -896,7 +878,6 @@ struct DragonetPlayerView: View {
             }
         }
         .onDisappear {
-            // Guard to protect against orientation lock breakage when moving inside multiview grid
             if !isTransitioningToMultiView {
                 AppDelegate.orientationLock = .portrait
                 if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
@@ -1027,7 +1008,7 @@ struct DragonetPlayerView: View {
 
                 HStack(spacing: 12) {
                     
-                    if let effProg = effectiveProgram {
+                    if appState.canManageRecordings, let effProg = effectiveProgram {
                         DragonetRecordingButtons(program: effProg, appState: appState)
                             .id(appState.currentProgramId ?? vm.channel?.id ?? UUID().uuidString)
                     }
@@ -1146,7 +1127,7 @@ struct DragonetPlayerView: View {
             let rangeStart = max(vm.seekableStart, 0)
             let rangeEnd = max(vm.seekableEnd, rangeStart + 1)
             
-            Slider(value: Binding(
+            Slider(value: Binding<Double>(
                 get: { max(min(vm.currentTime, rangeEnd), rangeStart) },
                 set: { val in vm.currentTime = val }
             ), in: rangeStart...rangeEnd) { editing in

@@ -13,6 +13,7 @@
 		EBCC8A8A2DA967E2003DF1A6 /* NukeExtensions in Frameworks */ = {isa = PBXBuildFile; productRef = EBCC8A892DA967E2003DF1A6 /* NukeExtensions */; };
 		EBCC8A8C2DA967E2003DF1A6 /* NukeVideo in Frameworks */ = {isa = PBXBuildFile; productRef = EBCC8A8B2DA967E2003DF1A6 /* NukeVideo */; };
 		EBE19BCA2F058A8300C21C63 /* LiveFin Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = EBE19BC02F058A7A00C21C63 /* LiveFin Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		EBE9DFB2300E73D6006D505B /* JellyfinAPI in Frameworks */ = {isa = PBXBuildFile; productRef = EBE9DFB1300E73D6006D505B /* JellyfinAPI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -62,6 +63,14 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		EB0B2C2B300B4F9E0079F44B /* Exceptions for "LiveFin" folder in "LiveFin tvOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				App/AppState.swift,
+				App/KeychainHelper.swift,
+			);
+			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
+		};
 		EB15E7AC2EED2DD100A778BD /* Exceptions for "LiveFin tvOS" folder in "LiveFin tvOS" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -80,13 +89,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Components/DemoMode/DemoChannel.swift,
-				Components/Guide/GuideViewComponents.swift,
-				Components/Home/HomeViewComponents.swift,
 				Components/Image/ProgramImage.swift,
-				Components/Library/MediaComponents.swift,
-				"Components/Live TV Programs/ProgramViewComponents.swift",
-				Components/MediaInfo/OpenLiveStreamService.swift,
-				Components/MediaInfo/PlaybackInfoService.swift,
 				Components/Recording/NotificationManager.swift,
 				Components/Recording/ProgramRecordingViewModel.swift,
 				Components/Recording/RecordingConfiguration.swift,
@@ -94,12 +97,22 @@
 			);
 			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
 		};
-		EBA77905300B35D000F3262F /* Exceptions for "LiveFin" folder in "LiveFin tvOS" target */ = {
+		EB5583D53013A15F003EF6F6 /* Exceptions for "Shared" folder in "LiveFin Watch App" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				App/KeychainHelper.swift,
+				"Resources/LiveFin-Aura.icon",
+				"Resources/LiveFin-Broken.icon",
+				"Resources/LiveFin-Burple.icon",
+				"Resources/LiveFin-Jelly.icon",
+				"Resources/LiveFin-Noir.icon",
+				"Resources/LiveFin-Purple.icon",
+				"Resources/LiveFin-Real.icon",
+				"Resources/LiveFin-Rojo.icon",
+				"Resources/LiveFin-Slime.icon",
+				"Resources/LiveFin-Yolo.icon",
+				Resources/LiveFin.icon,
 			);
-			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
+			target = EBE19BBF2F058A7A00C21C63 /* LiveFin Watch App */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -107,6 +120,7 @@
 		EB130A632EDB353D00381D60 /* Shared */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
+				EB5583D53013A15F003EF6F6 /* Exceptions for "Shared" folder in "LiveFin Watch App" target */,
 				EB18D7DC2FF2FEEB001123BC /* Exceptions for "Shared" folder in "LiveFin tvOS" target */,
 			);
 			path = Shared;
@@ -124,7 +138,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				EB18D7D02FF2F8B3001123BC /* Exceptions for "LiveFin" folder in "LiveFin" target */,
-				EBA77905300B35D000F3262F /* Exceptions for "LiveFin" folder in "LiveFin tvOS" target */,
+				EB0B2C2B300B4F9E0079F44B /* Exceptions for "LiveFin" folder in "LiveFin tvOS" target */,
 			);
 			path = LiveFin;
 			sourceTree = "<group>";
@@ -141,6 +155,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				EBE9DFB2300E73D6006D505B /* JellyfinAPI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -187,6 +202,7 @@
 				EBE19BC12F058A7A00C21C63 /* LiveFin Watch App */,
 				EB15E79E2EED2DCF00A778BD /* LiveFin tvOS */,
 				EB130A632EDB353D00381D60 /* Shared */,
+				EBE9DFB0300E73D6006D505B /* Frameworks */,
 				EBCC8A0D2DA88899003DF1A6 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -201,6 +217,13 @@
 				EBE19BC02F058A7A00C21C63 /* LiveFin Watch App.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		EBE9DFB0300E73D6006D505B /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -225,6 +248,7 @@
 			);
 			name = "LiveFin tvOS";
 			packageProductDependencies = (
+				EBE9DFB1300E73D6006D505B /* JellyfinAPI */,
 			);
 			productName = "LiveFin tvOS";
 			productReference = EB15E79D2EED2DCF00A778BD /* LiveFin tvOS.app */;
@@ -492,8 +516,10 @@
 		EB15E7AE2EED2DD100A778BD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				ASSETCATALOG_COMPILER_APPICON_NAME = tvOS;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = KFQZK38LL3;
@@ -510,8 +536,9 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.kpgamingz.LiveFin-tvOS";
+				PRODUCT_BUNDLE_IDENTIFIER = com.kpgamingz.TVLiveFin;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = appletvos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -527,8 +554,10 @@
 		EB15E7AF2EED2DD100A778BD /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				ASSETCATALOG_COMPILER_APPICON_NAME = tvOS;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = KFQZK38LL3;
@@ -545,8 +574,9 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.kpgamingz.LiveFin-tvOS";
+				PRODUCT_BUNDLE_IDENTIFIER = com.kpgamingz.TVLiveFin;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = appletvos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -1024,6 +1054,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = EBCC8A842DA96727003DF1A6 /* XCRemoteSwiftPackageReference "nuke" */;
 			productName = NukeVideo;
+		};
+		EBE9DFB1300E73D6006D505B /* JellyfinAPI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = EBCC8A7E2DA88B95003DF1A6 /* XCRemoteSwiftPackageReference "jellyfin-sdk-swift" */;
+			productName = JellyfinAPI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

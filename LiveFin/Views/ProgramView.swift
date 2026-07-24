@@ -22,13 +22,15 @@ struct ProgramView: View {
     @EnvironmentObject private var appState: AppState
     @StateObject private var viewModel: ProgramViewModel
     
-    // Notification Deep Link Listener
+    #if os(iOS)
+    // Notification Deep Link Listener (iOS Only)
     @StateObject private var notificationManager = NotificationManager.shared
+    @State private var showNotificationSheet = false
+    #endif
     
-    // Recording and Notification States
+    // Recording States
     @StateObject private var recordingViewModel: ProgramRecordingViewModel
     @State private var showRecordingSheet = false
-    @State private var showNotificationSheet = false
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass: UserInterfaceSizeClass?
     #if os(iOS)
@@ -101,9 +103,11 @@ struct ProgramView: View {
         .sheet(isPresented: $showRecordingSheet) {
             RecordingConfigurationView(viewModel: recordingViewModel)
         }
+        #if os(iOS)
         .sheet(isPresented: $showNotificationSheet) {
             NotificationConfigurationView(viewModel: recordingViewModel)
         }
+        #endif
         .fullScreenCover(item: $viewModel.streamItem) { item in
             DragonetPlayerView(
                 streamURL: item.url,
@@ -126,6 +130,7 @@ struct ProgramView: View {
         } message: {
             Text(viewModel.playbackErrorMessage ?? "An unknown error occurred while trying to play the channel.")
         }
+        #if os(iOS)
         .onChange(of: notificationManager.requestedProgramId) { programId in
             // Handle if a user taps while they are already viewing this program
             if programId == program.id && notificationManager.autoPlayRequested {
@@ -135,10 +140,12 @@ struct ProgramView: View {
                 notificationManager.autoPlayRequested = false
             }
         }
+        #endif
         .onAppear {
             viewModel.onAppear()
             recordingViewModel.checkPendingNotifications()
             
+            #if os(iOS)
             // Handle if the view was just opened via deep link
             if notificationManager.requestedProgramId == program.id && notificationManager.autoPlayRequested {
                 Task { await viewModel.startPlayback() }
@@ -146,6 +153,7 @@ struct ProgramView: View {
                 notificationManager.requestedProgramId = nil
                 notificationManager.autoPlayRequested = false
             }
+            #endif
         }
         .task(id: program.id) {
             await viewModel.load()
@@ -263,6 +271,7 @@ struct ProgramView: View {
                 }
             }
             
+            #if os(iOS)
             // Only allow scheduling notifications if it's in the future OR it's a series (where we can schedule future eps)
             if !viewModel.isLive || isLikelySeries {
                 Button {
@@ -289,16 +298,19 @@ struct ProgramView: View {
                     }
                 }
             }
+            #endif
             
-            Button {
-                showRecordingSheet = true
-            } label: {
-                Image(systemName: recordingViewModel.isRecordingScheduled ? "record.circle.fill" : "record.circle")
-                    .font(.headline)
-                    .padding(12)
-                    .foregroundColor(recordingViewModel.isRecordingScheduled ? .red : .primary)
-                    .background(recordingViewModel.isRecordingScheduled ? Color.red.opacity(0.4) : Color.gray.opacity(0.2))
-                    .glassEffect(in: Circle())
+            if appState.canManageRecordings {
+                Button {
+                    showRecordingSheet = true
+                } label: {
+                    Image(systemName: recordingViewModel.isRecordingScheduled ? "record.circle.fill" : "record.circle")
+                        .font(.headline)
+                        .padding(12)
+                        .foregroundColor(recordingViewModel.isRecordingScheduled ? .red : .primary)
+                        .background(recordingViewModel.isRecordingScheduled ? Color.red.opacity(0.4) : Color.gray.opacity(0.2))
+                        .glassEffect(in: Circle())
+                }
             }
         }
         .padding(.vertical, 4)
@@ -390,7 +402,7 @@ struct ProgramView: View {
                         Divider().padding(.leading, 8)
                     }
                 }
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color(UIColor.secondarySystemBackground)))
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.platformSecondaryBackground))
             }
         }
     }
