@@ -150,7 +150,6 @@ struct InfoCard: View {
     }
 }
 
-// A native button view that perfectly handles tvOS focus state automatically
 struct FocusableLogoutButton: View {
     let action: () -> Void
     
@@ -161,11 +160,16 @@ struct FocusableLogoutButton: View {
                 .fontWeight(.bold)
                 .padding(.horizontal, 24)
                 .padding(.vertical, 8)
+                // Frame ensures the button has enough hit area for the focus engine
+                .frame(minWidth: 200, minHeight: 60)
         }
-        // By using the native tvOS .bordered style and completely removing .plain,
-        // Apple TV automatically handles focus state, making it selectable via the Siri Remote,
-        // scaling it up, and turning the button solid red when highlighted.
-        .buttonStyle(.bordered)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        // Ensuring the button uses plain styling so it can handle focus natively
+        .buttonStyle(.plain)
+        // Adding the focus effect
+        .hoverEffect(.highlight)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.red.opacity(0.8))
+        )
     }
 }

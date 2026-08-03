@@ -76,8 +76,12 @@ struct DragonetPlayer: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ vc: DragonetPlayerController, context: Context) {
-        // Caption selection is now fully handled by PlanktonPlayerViewModel natively.
-        // Doing it here causes a loop that overrides manual user track selections.
+        // Essential for MultiView: Updates the controller's player if the ViewModel swaps it,
+        // preventing the "audio only / frozen original video" bug.
+        if vc.player !== player {
+            vc.player = player
+            context.coordinator.updatePlayer(player)
+        }
     }
 
     // MARK: - Coordinator
@@ -144,6 +148,15 @@ struct DragonetPlayer: UIViewControllerRepresentable {
         }
 
         // MARK: Player observation
+        
+        func updatePlayer(_ newPlayer: AVPlayer) {
+            // Invalidate the old observers before attaching to the new AVPlayer instance
+            itemStatusObserver?.invalidate()
+            statusObserver?.invalidate()
+            itemErrorObserver?.invalidate()
+            
+            observePlayer(newPlayer)
+        }
 
         func observePlayer(_ player: AVPlayer) {
             itemStatusObserver = player.observe(\.currentItem?.status, options: [.initial, .new]) { p, _ in

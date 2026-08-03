@@ -22,6 +22,9 @@ struct ProgramView: View {
     @EnvironmentObject private var appState: AppState
     @StateObject private var viewModel: ProgramViewModel
     
+    // Limits initial rendering load for Upcoming items
+    @State private var isUpcomingExpanded = false
+    
     #if os(iOS)
     // Notification Deep Link Listener (iOS Only)
     @StateObject private var notificationManager = NotificationManager.shared
@@ -83,20 +86,43 @@ struct ProgramView: View {
     // MARK: Body
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                imageSection
-                titleSection
-                ratingRow
-                channelRow
-                actionButtons
-                metaChips
-                overviewText
-                relatedSection
-                upcomingSection
-                Spacer(minLength: 32)
+        GeometryReader { geo in
+            ScrollView {
+                #if os(iOS)
+                let isLandscapeiPad = isiPad && (geo.size.width > geo.size.height)
+                if isLandscapeiPad {
+                    Grid(alignment: .topLeading, horizontalSpacing: 32, verticalSpacing: 24) {
+                        GridRow {
+                            imageSection
+                                .gridCellColumns(1)
+                            
+                            VStack(alignment: .leading, spacing: 14) {
+                                titleSection
+                                ratingRow
+                                channelRow
+                                actionButtons
+                                metaChips
+                                overviewText
+                            }
+                            .gridCellColumns(1)
+                        }
+                        
+                        GridRow {
+                            VStack(alignment: .leading, spacing: 24) {
+                                relatedSection
+                                upcomingSection
+                            }
+                            .gridCellColumns(2)
+                        }
+                    }
+                    .padding()
+                } else {
+                    defaultStackLayout
+                }
+                #else
+                defaultStackLayout
+                #endif
             }
-            .padding(.horizontal)
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
@@ -158,6 +184,22 @@ struct ProgramView: View {
         .task(id: program.id) {
             await viewModel.load()
         }
+    }
+
+    private var defaultStackLayout: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            imageSection
+            titleSection
+            ratingRow
+            channelRow
+            actionButtons
+            metaChips
+            overviewText
+            relatedSection
+            upcomingSection
+            Spacer(minLength: 32)
+        }
+        .padding(.horizontal)
     }
 
     // MARK: - Sections
@@ -379,8 +421,10 @@ struct ProgramView: View {
                 Text("No upcoming airings found in the next 7-14 days.")
                     .font(.subheadline).foregroundColor(.secondary)
             } else {
+                let displayedList = isUpcomingExpanded ? viewModel.combinedUpcoming : Array(viewModel.combinedUpcoming.prefix(10))
+                
                 VStack(spacing: 0) {
-                    ForEach(viewModel.combinedUpcoming, id: \.airingKey) { up in
+                    ForEach(displayedList, id: \.airingKey) { up in
                         NavigationLink(
                             destination: ProgramView(program: up, appState: appState)
                                 .environmentObject(appState)
@@ -400,6 +444,48 @@ struct ProgramView: View {
                         }
                         .buttonStyle(.plain)
                         Divider().padding(.leading, 8)
+                    }
+                    
+                    if viewModel.isLoadingMoreUpcoming {
+                        ProgressView()
+                            .padding(.vertical, 12)
+                    } else if !isUpcomingExpanded && viewModel.combinedUpcoming.count > 10 {
+                        Button {
+                            withAnimation {
+                                isUpcomingExpanded = true
+                            }
+                            if viewModel.hasMoreUpcoming {
+                                Task {
+                                    await viewModel.fetchNextUpcomingPage()
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Spacer()
+                                Text("Load More (\(viewModel.combinedUpcoming.count - 10)+)")
+                                    .font(.subheadline.bold())
+                                    .foregroundColor(.accentColor)
+                                Spacer()
+                            }
+                            .padding(.vertical, 12)
+                        }
+                        .buttonStyle(.plain)
+                    } else if isUpcomingExpanded && viewModel.hasMoreUpcoming {
+                        Button {
+                            Task {
+                                await viewModel.fetchNextUpcomingPage()
+                            }
+                        } label: {
+                            HStack {
+                                Spacer()
+                                Text("Load More Airings")
+                                    .font(.subheadline.bold())
+                                    .foregroundColor(.accentColor)
+                                Spacer()
+                            }
+                            .padding(.vertical, 12)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .background(RoundedRectangle(cornerRadius: 12).fill(Color.platformSecondaryBackground))

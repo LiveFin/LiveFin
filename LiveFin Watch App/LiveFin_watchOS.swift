@@ -143,26 +143,6 @@ final class WatchAppState: NSObject, ObservableObject {
         request.setValue(headerValue, forHTTPHeaderField: "Authorization")
     }
 
-    // MARK: - API Helpers
-    private var jellyfinDecoder: JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .custom { decoder in
-            let container = try decoder.singleValueContainer()
-            let dateString = try container.decode(String.self)
-            
-            let isoFrac = ISO8601DateFormatter()
-            isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let date = isoFrac.date(from: dateString) { return date }
-            
-            let isoPlain = ISO8601DateFormatter()
-            isoPlain.formatOptions = [.withInternetDateTime]
-            if let date = isoPlain.date(from: dateString) { return date }
-            
-            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Cannot decode date: \(dateString)")
-        }
-        return decoder
-    }
-
     // MARK: - Channels API
     func loadChannelsIfNeeded(force: Bool) async {
         if !isAuthenticated { return }
@@ -177,7 +157,6 @@ final class WatchAppState: NSObject, ObservableObject {
         lastError = nil
         defer { isLoadingChannels = false }
         
-        // Removed leading slash from path to prevent malformed URL (e.g. http://server:8096//LiveTv/Channels)
         var comps = URLComponents(url: base.appendingPathComponent("LiveTv/Channels"), resolvingAgainstBaseURL: false)
         comps?.queryItems = [URLQueryItem(name: "userId", value: userId)]
         guard let url = comps?.url else { return }
@@ -195,7 +174,6 @@ final class WatchAppState: NSObject, ObservableObject {
                 return
             }
             
-            // Added channelNumber fallback to support varying Jellyfin server versions
             struct ChannelDTO: Decodable {
                 let id: String; let name: String?; let number: String?; let channelNumber: String?
                 enum CodingKeys: String, CodingKey { case id = "Id"; case name = "Name"; case number = "Number"; case channelNumber = "ChannelNumber" }
@@ -252,7 +230,6 @@ final class WatchAppState: NSObject, ObservableObject {
         isLoadingDVR = true
         defer { isLoadingDVR = false }
         
-        // Fetch ONLY Timers (Upcoming scheduled recordings)
         var timerReq = URLRequest(url: base.appendingPathComponent("LiveTv/Timers"))
         setAuthHeader(on: &timerReq)
         
@@ -334,6 +311,25 @@ final class WatchAppState: NSObject, ObservableObject {
         if let u = ctx["userId"] as? String, u != userId { userId = u; changed = true }
         if changed { persistCredentials(); Task { await loadChannelsIfNeeded(force: true) } }
     }
+
+    private var jellyfinDecoder: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let dateString = try container.decode(String.self)
+            
+            let isoFrac = ISO8601DateFormatter()
+            isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = isoFrac.date(from: dateString) { return date }
+            
+            let isoPlain = ISO8601DateFormatter()
+            isoPlain.formatOptions = [.withInternetDateTime]
+            if let date = isoPlain.date(from: dateString) { return date }
+            
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Cannot decode date: \(dateString)")
+        }
+        return decoder
+    }
 }
 
 #if canImport(WatchConnectivity)
@@ -349,17 +345,24 @@ extension WatchAppState: WCSessionDelegate {
 #endif
 
 // MARK: - Views
+enum WatchTab {
+    case channels
+    case dvr
+}
+
 struct WatchRootView: View {
     @EnvironmentObject var appState: WatchAppState
+    @State private var selectedTab: WatchTab = .channels
 
     var body: some View {
         if !appState.isAuthenticated {
             WatchLoginView()
         } else {
-            TabView {
+            TabView(selection: $selectedTab) {
                 NavigationStack {
                     WatchChannelsView()
                 }
+                .tag(WatchTab.channels)
                 .tabItem {
                     Label("Channels", systemImage: "tv")
                 }
@@ -367,10 +370,13 @@ struct WatchRootView: View {
                 NavigationStack {
                     WatchRecordingsView()
                 }
+                .tag(WatchTab.dvr)
                 .tabItem {
-                    Label("DVR", systemImage: "clock") // Changed icon to represent Upcoming
+                    Label("DVR", systemImage: "clock")
                 }
             }
+            .tabViewStyle(.automatic) // Uses the standard watchOS tab bar navigation instead of pagination pages
+            .highPriorityGesture(DragGesture()) // Disables swiping between tabs
             .task {
                 await appState.loadChannelsIfNeeded(force: false)
                 await appState.fetchDVR()
@@ -482,7 +488,7 @@ struct WatchChannelDetailView: View {
                             ProgressView().scaleEffect(0.5)
                         }
                     }
-                    .padding(.vertical,4)
+                    .padding(.vertical, 4)
                     .swipeActions(edge: .leading) {
                         if let timerId = prog.timerId {
                             Button(role: .destructive) {
@@ -545,7 +551,6 @@ struct WatchChannelDetailView: View {
     }
 }
 
-// Rewritten completely to ONLY show upcoming scheduled items.
 struct WatchRecordingsView: View {
     @EnvironmentObject var appState: WatchAppState
     
@@ -722,7 +727,6 @@ actor JellyfinTimerCache {
 }
 
 // MARK: - iOS View Models
-// Mocks for compilation context based on usage
 protocol AppStateProtocol { var serverURL: String { get } ; var accessToken: String { get } }
 class AppState: AppStateProtocol { var serverURL = ""; var accessToken = "" }
 struct JFItemDto: Codable {}
@@ -732,8 +736,6 @@ struct JFProgram: Codable { let id: String; let name: String; let isSeries: Bool
 final class RecordingsViewModel: ObservableObject {
     @Published var scheduledTimers: [JFTimer] = []
     @Published var scheduledSeriesTimers: [JFSeriesTimer] = []
-    
-    // DELIBERATELY REMOVED: @Published var pastRecordings: [JFItemDto] = [] to enforce "Upcoming" only logic
     
     @Published var isInitialLoad = true
     @Published var hasDvrAccess = true
@@ -756,7 +758,6 @@ final class RecordingsViewModel: ObservableObject {
             async let timers = fetchTimers()
             async let seriesTimers = fetchSeriesTimers()
             
-            // Exclusively load upcoming logic
             let (t, st) = try await (timers, seriesTimers)
             
             self.scheduledTimers = t.sorted { ($0.parsedStartDate ?? .distantFuture) < ($1.parsedStartDate ?? .distantFuture) }

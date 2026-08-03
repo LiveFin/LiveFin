@@ -72,6 +72,8 @@ final class DragonetPlayerViewModel: ObservableObject {
     private var progressObserver: Any?
     private var playerItemObserver: NSKeyValueObservation?
     private var playbackStateObserver: NSKeyValueObservation?
+    private var likelyToKeepUpObserver: NSKeyValueObservation?
+    private var bufferEmptyObserver: NSKeyValueObservation?
     private var cancellables: Set<AnyCancellable> = []
     
     private var lastNowPlayingTitle: String?
@@ -79,6 +81,7 @@ final class DragonetPlayerViewModel: ObservableObject {
     private var lastNowPlayingImageId: String?
     
     private var hasStartedPlayback = false
+    private var intentionallyPaused = false
     private var lastPlaybackTime: CMTime = .invalid
 
     init(streamURL: URL, channel: LiveTvChannelDto?, program: JFProgram? = nil, appState: AppState, isMultiView: Bool = false) {
@@ -97,7 +100,10 @@ final class DragonetPlayerViewModel: ObservableObject {
         let item = AVPlayerItem(asset: asset)
         
         self.player = AVPlayer(playerItem: item)
-        self.player.automaticallyWaitsToMinimizeStalling = true
+        
+        // CRITICAL FIX: Setting this to false forces AVPlayer to start playback immediately
+        // as soon as the first playable chunk is available, rather than waiting to build a massive buffer.
+        self.player.automaticallyWaitsToMinimizeStalling = false
         
         if #available(iOS 15.0, *) {
             self.player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
@@ -113,6 +119,7 @@ final class DragonetPlayerViewModel: ObservableObject {
         
         setupPlaybackStateObserver()
         setupStreamErrorRecovery()
+        observeItem(item)
 
         if #available(iOS 15.0, *) {
             Task {
@@ -129,11 +136,42 @@ final class DragonetPlayerViewModel: ObservableObject {
         }
         
         // Ensure we automatically start playback once the item is ready
+        self.intentionallyPaused = false
         self.player.play()
     }
 
     deinit {
         // Handled deterministically by `explicitCleanup()`
+    }
+    
+    private func observeItem(_ item: AVPlayerItem) {
+        likelyToKeepUpObserver?.invalidate()
+        bufferEmptyObserver?.invalidate()
+        
+        // Because automaticallyWaitsToMinimizeStalling is false, we MUST manually
+        // resume playback when the buffer recovers from a stall.
+        likelyToKeepUpObserver = item.observe(\.isPlaybackLikelyToKeepUp, options: [.initial, .new]) { [weak self] item, _ in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                if item.isPlaybackLikelyToKeepUp {
+                    if self.isBuffering {
+                        self.isBuffering = false
+                    }
+                    if !self.intentionallyPaused && self.hasStartedPlayback && self.player.timeControlStatus != .playing {
+                        self.player.play()
+                    }
+                }
+            }
+        }
+        
+        bufferEmptyObserver = item.observe(\.isPlaybackBufferEmpty, options: [.initial, .new]) { [weak self] item, _ in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                if item.isPlaybackBufferEmpty {
+                    self.isBuffering = true
+                }
+            }
+        }
     }
     
     /// Thread-safe cleanup explicitly triggered when the view disappears or is dismissed.
@@ -158,6 +196,12 @@ final class DragonetPlayerViewModel: ObservableObject {
         
         stateObserver?.invalidate()
         self.playbackStateObserver = nil
+        
+        likelyToKeepUpObserver?.invalidate()
+        self.likelyToKeepUpObserver = nil
+        
+        bufferEmptyObserver?.invalidate()
+        self.bufferEmptyObserver = nil
         
         if let cid = channelId {
             state.reportPlaybackStopped(itemId: cid, positionTicks: ticks)
@@ -220,6 +264,12 @@ final class DragonetPlayerViewModel: ObservableObject {
         playbackStateObserver?.invalidate()
         self.playbackStateObserver = nil
         
+        likelyToKeepUpObserver?.invalidate()
+        self.likelyToKeepUpObserver = nil
+        
+        bufferEmptyObserver?.invalidate()
+        self.bufferEmptyObserver = nil
+        
         preventCleanupOnDeinit = true
         return self.player
     }
@@ -238,6 +288,10 @@ final class DragonetPlayerViewModel: ObservableObject {
         
         self.player = other.transferPlayer()
         
+        if let item = self.player.currentItem {
+            observeItem(item)
+        }
+        
         self.streamURL = newURL
         self.channel = newChannel
         self.program = newProgram
@@ -255,6 +309,21 @@ final class DragonetPlayerViewModel: ObservableObject {
         startLiveEdgeObserver()
         setupReportingObservers()
         
+        // We MUST re-register the Now Playing & Remote Command observers here because
+        // the explicit cleanup completely wipes them before swapping out the stream!
+        if !self.isMultiView {
+            setupNowPlayingObservers()
+            setupRemoteCommands()
+            
+            // CRITICAL: We must reset our local caches here, otherwise returning to
+            // the original stream ignores the update thinking it never changed.
+            self.lastNowPlayingTitle = nil
+            self.lastNowPlayingSubtitle = nil
+            self.lastNowPlayingImageId = nil
+            
+            restoreNowPlaying()
+        }
+        
         self.player.isMuted = false
         
         if let newCid = self.channel?.id {
@@ -270,6 +339,7 @@ final class DragonetPlayerViewModel: ObservableObject {
     func startPlayback() {
         guard !hasStartedPlayback else { return }
         hasStartedPlayback = true
+        intentionallyPaused = false
         
         if !isMultiView {
             activateAudioSession()
@@ -336,6 +406,7 @@ final class DragonetPlayerViewModel: ObservableObject {
 
     func togglePlayPause() {
         if player.timeControlStatus == .paused {
+            intentionallyPaused = false
             guard let item = player.currentItem else {
                 player.play()
                 return
@@ -360,6 +431,7 @@ final class DragonetPlayerViewModel: ObservableObject {
                 }
             }
         } else {
+            intentionallyPaused = true
             player.pause()
         }
     }
@@ -388,6 +460,9 @@ final class DragonetPlayerViewModel: ObservableObject {
         let fresh = AVPlayerItem(asset: asset)
         
         player.replaceCurrentItem(with: fresh)
+        observeItem(fresh)
+        
+        intentionallyPaused = false
         player.play()
         
         if #available(iOS 15.0, *) {
@@ -422,7 +497,9 @@ final class DragonetPlayerViewModel: ObservableObject {
             let ticks = self.safeTicks(from: player.currentTime())
             
             DispatchQueue.main.async {
-                self.isBuffering = (status == .waitingToPlayAtSpecifiedRate)
+                if status == .waitingToPlayAtSpecifiedRate {
+                    self.isBuffering = true
+                }
                 
                 if status == .playing {
                     self.isPlaying = true
@@ -490,9 +567,6 @@ final class DragonetPlayerViewModel: ObservableObject {
                       item == self.player.currentItem else { return }
                 
                 self.isBuffering = true
-                if self.player.timeControlStatus == .paused && self.hasStartedPlayback {
-                    self.player.play()
-                }
             }
             .store(in: &cancellables)
     }
@@ -921,7 +995,7 @@ struct DragonetPlayerView: View {
                         EmptyView()
                     }
                 }
-                .id(urlString)
+                .id(urlString) // Ensures Image reliably resets on URL/Metadata update
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea()
                 .opacity(0.3)
@@ -980,7 +1054,7 @@ struct DragonetPlayerView: View {
                             apiKey: appState.accessToken,
                             channelId: cid
                         )
-                        .id(cid)
+                        .id(cid) // Ensures Image reliably resets on Channel update
                         .frame(width: 50, height: 50)
                         .shadow(radius: 4)
                     }

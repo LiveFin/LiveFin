@@ -6,7 +6,6 @@ import Combine
 import UIKit
 #endif
 
-// MARK: - Cross-Platform UI Colors
 extension Color {
     static var platformTertiaryFill: Color {
         #if os(tvOS)
@@ -24,8 +23,6 @@ extension Color {
     }
 }
 
-// MARK: - Stream URL Item
-
 struct StreamURLItem: Identifiable, Equatable {
     let id: String
     let url: URL
@@ -34,8 +31,6 @@ struct StreamURLItem: Identifiable, Equatable {
         self.id = url.absoluteString
     }
 }
-
-// MARK: - JFProgram Model
 
 struct JFProgram: Identifiable, Hashable {
     let id: String
@@ -160,8 +155,6 @@ struct JFProgram: Identifiable, Hashable {
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
-// MARK: - ProgramViewModel
-
 @MainActor
 final class ProgramViewModel: ObservableObject {
 
@@ -175,10 +168,8 @@ final class ProgramViewModel: ObservableObject {
     @Published var streamItem: StreamURLItem? = nil
     @Published var playbackErrorMessage: String? = nil
 
-    // Notifications
     @Published var scheduledNotificationCount: Int = 0
 
-    // Pagination specific variables
     @Published var isLoadingMoreUpcoming: Bool = false
     @Published var hasMoreUpcoming: Bool = true
     private var upcomingDaysOffset: Int = 0
@@ -240,8 +231,6 @@ final class ProgramViewModel: ObservableObject {
     }
 
     var relatedPrograms: [JFProgram] { relatedServer }
-
-    // Preserve the public property name in case the original code relied on it
     var combinedUpcoming: [JFProgram] { displayedUpcoming }
 
     func chips() -> [String] {
@@ -272,8 +261,6 @@ final class ProgramViewModel: ObservableObject {
         )
     }
 
-    /// Groups all airings of the same program/series under one cancelable bucket,
-    /// falling back to a normalized title when there's no seriesId (e.g. movies, news).
     var notificationGroupKey: String {
         if let sid = program.seriesId, !sid.isEmpty { return "series.\(sid)" }
         let title = program.seriesName?.isEmpty == false ? program.seriesName! : program.name
@@ -333,10 +320,7 @@ final class ProgramViewModel: ObservableObject {
         await ensureChannelName()
         refreshScheduledNotificationCount()
         
-        // Let's populate the initial batch of upcoming first to fall back onto if necessary
         await fetchNextUpcomingPage()
-        
-        // Then populate related
         await fetchRelatedPrograms()
 
         isLoadingUpcoming = false
@@ -406,19 +390,16 @@ final class ProgramViewModel: ObservableObject {
         }
 
         if let list = await attempt(baseParams) { return list }
-        
         if let list = await attempt(baseParams.map { qi in
             if qi.name == "MinStartDate" { return URLQueryItem(name: "StartDateUtc", value: qi.value) }
             if qi.name == "MaxStartDate" { return URLQueryItem(name: "EndDateUtc", value: qi.value) }
             return qi
         }) { return list }
-        
         if let list = await attempt(baseParams.map { qi in
             if qi.name == "MinStartDate" { return URLQueryItem(name: "startDate", value: qi.value) }
             if qi.name == "MaxStartDate" { return URLQueryItem(name: "endDate", value: qi.value) }
             return qi
         }) { return list }
-        
         return []
     }
 
@@ -487,13 +468,12 @@ final class ProgramViewModel: ObservableObject {
         var baseParams: [URLQueryItem] = [
             URLQueryItem(name: "MinStartDate", value: minStart),
             URLQueryItem(name: "MaxStartDate", value: maxStart),
-            URLQueryItem(name: "Limit", value: "3000"), // Max out chunks locally within 14 days
+            URLQueryItem(name: "Limit", value: "3000"),
             URLQueryItem(name: "Fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,ChannelId,ChannelName,IsRepeat,SeriesId,ItemId")
         ]
         
         var allFound: [JFProgram] = []
         
-        // Channel Schedule (if valid)
         if let cid = effectiveChannelId {
             var p = baseParams
             p.append(URLQueryItem(name: "channelIds", value: cid))
@@ -502,7 +482,6 @@ final class ProgramViewModel: ObservableObject {
             allFound.append(contentsOf: sched.filter { ($0.startDate ?? .distantPast) > windowStart })
         }
         
-        // Extended Future Network Sweeps
         async let searchFuture: [JFProgram] = {
             var p = baseParams
             p.append(URLQueryItem(name: "SearchTerm", value: term))
@@ -535,11 +514,9 @@ final class ProgramViewModel: ObservableObject {
         
         let targetSeries = program.seriesName?.isEmpty == false ? program.seriesName : nil
         
-        // Filter down explicitly irrelevant noise out of chunk pulls
         let matched = allFound.filter { p in
             guard let s = p.startDate, s > windowStart, p.id != program.id else { return false }
             
-            // Check if matches generic channel schedule criteria
             if p.channelId == effectiveChannelId {
                 if let ts = targetSeries {
                     if p.seriesName == ts { return true }
@@ -548,7 +525,6 @@ final class ProgramViewModel: ObservableObject {
                 }
             }
             
-            // Extensive metadata matching for cross-channel tracking
             let pName = normTitle(p.name)
             let pSeries = p.seriesName.flatMap { $0.isEmpty ? nil : normTitle($0) }
             
@@ -570,10 +546,8 @@ final class ProgramViewModel: ObservableObject {
         }
         
         displayedUpcoming.append(contentsOf: newResults)
-        
         upcomingDaysOffset += 14
         
-        // Limit to roughly a month out or abort if a 14 day scan turned up nothing new
         if upcomingDaysOffset >= 42 || newResults.isEmpty {
             hasMoreUpcoming = false
         }
@@ -702,7 +676,6 @@ final class ProgramViewModel: ObservableObject {
             final.insert(contentsOf: scoreAndFilter(pool: similar), at: 0)
         }
 
-        // Fallback onto our primary paginated upcoming pool if all searches turned up blank
         if final.isEmpty {
             var seen: Set<String> = []
             var fallback: [JFProgram] = []
@@ -765,8 +738,6 @@ final class ProgramViewModel: ObservableObject {
     }
 }
 
-// MARK: - Skeleton Views
-
 struct UpcomingSkeletonRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -827,8 +798,6 @@ struct RelatedSkeletonView: View {
         }
     }
 }
-
-// MARK: - Reusable UI Components
 
 struct LiveBadge: View {
     var body: some View {
@@ -985,7 +954,6 @@ struct UpcomingProgramRow: View {
     }
 }
 
-// Drops directly into ProgramView to implement the newly created paginated logic
 struct UpcomingAiringsScrollView: View {
     @ObservedObject var viewModel: ProgramViewModel
     
@@ -1025,13 +993,6 @@ struct RelatedProgramCard: View {
     #else
     private var isiPad: Bool { false }
     #endif
-    private var isiPadOrMac: Bool {
-        #if os(macOS) || targetEnvironment(macCatalyst)
-        return true
-        #else
-        return isiPad || horizontalSizeClass == .regular
-        #endif
-    }
     private var isMovie: Bool { program.isLikelyMovie }
     private var imageWidth: CGFloat { isMovie ? 120 : 220 }
     private var imageHeight: CGFloat { isMovie ? 180 : 124 }
@@ -1045,14 +1006,12 @@ struct RelatedProgramCard: View {
                         case .empty: ZStack { Color.platformSecondaryBackground; ProgressView() }
                         case .success(let img):
                             ZStack {
-                                // 1. Blurred background filling the box
                                 img.resizable().scaledToFill()
                                     .frame(width: imageWidth, height: imageHeight)
                                     .blur(radius: 15)
                                     .opacity(0.6)
                                     .clipped()
                                 
-                                // 2. The actual image fitted cleanly inside the box
                                 img.resizable().scaledToFit()
                                     .frame(width: imageWidth, height: imageHeight)
                             }
@@ -1081,7 +1040,6 @@ struct RelatedProgramCard: View {
         #if os(macOS)
         let maxWidth = isMovie ? "1200" : "800"
         #elseif os(tvOS)
-        // Viewed from across the room on a much larger panel than iPhone/iPad.
         let maxWidth = isMovie ? "1200" : "900"
         #elseif targetEnvironment(macCatalyst)
         let maxWidth = isMovie ? "1000" : "700"
@@ -1108,13 +1066,6 @@ struct ProgramDetailImage: View {
     #else
     private var isiPad: Bool { false }
     #endif
-    private var isiPadOrMac: Bool {
-        #if os(macOS) || targetEnvironment(macCatalyst)
-        return true
-        #else
-        return isiPad || horizontalSizeClass == .regular
-        #endif
-    }
 
     var body: some View {
         GeometryReader { geo in
@@ -1129,14 +1080,12 @@ struct ProgramDetailImage: View {
                             .background(Color.platformSecondaryBackground)
                     case .success(let img):
                         ZStack {
-                            // 1. Massive blurred background for the main header poster
                             img.resizable().scaledToFill()
                                 .frame(width: geo.size.width, height: geo.size.height)
                                 .blur(radius: 30)
                                 .opacity(0.6)
                                 .clipped()
                             
-                            // 2. The crisp, perfectly fitted poster/thumbnail
                             img.resizable().scaledToFit()
                                 .frame(width: geo.size.width, height: geo.size.height)
                         }

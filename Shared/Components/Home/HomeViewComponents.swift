@@ -289,7 +289,6 @@ struct HorizontalChannelsRow: View {
                 ChannelImageView(baseUrl: appState.serverURL, apiKey: appState.apiKey, channelId: channel.id)
                     .frame(width: iconOuterSize, height: iconOuterSize)
                     .blur(radius: 32)
-                    .opacity(0.85)
 
                 if #available(iOS 26.0, tvOS 26.0, *) {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)

@@ -10,6 +10,7 @@ import Combine
 import UIKit
 #endif
 
+// MARK: - Main tvOS Guide View
 struct TVGuideView: View {
     @EnvironmentObject var appState: AppState
     @StateObject private var vm = GuideViewModel.shared
@@ -19,7 +20,7 @@ struct TVGuideView: View {
     @State private var focusedProgramId: String? = nil
     @State private var streamChannel: LiveTvChannelDto? = nil
     
-    // Grid layout constants suitable for TV
+    // Grid layout constants suitable for tvOS
     private let tvChannelWidth: CGFloat = 220
     private let tvRowHeight: CGFloat = 80
     private let tvHeaderHeight: CGFloat = 40
@@ -95,7 +96,6 @@ struct TVGuideView: View {
                 }
             }
             .fullScreenCover(item: $streamChannel) { channel in
-                // Standard channel start execution matched from TVProgramView
                 if let jfChannel = JFChannel(json: ["Id": channel.id, "Name": channel.name ?? ""]) {
                     TVPlayerView(channel: jfChannel)
                         .environmentObject(appState)
@@ -104,11 +104,8 @@ struct TVGuideView: View {
         }
     }
     
-    // MARK: - Hero Section
-    // MARK: - Hero Section
     private var heroSection: some View {
         HStack(alignment: .top, spacing: 24) {
-            // Placeholder for program image
             ZStack {
                 Rectangle()
                     .fill(Color.gray.opacity(0.3))
@@ -166,27 +163,65 @@ struct TVGuideView: View {
             .padding(.top, 12)
             
             Spacer()
+
+            tvRefreshButton
         }
         .padding(30)
     }
+
+    @ViewBuilder
+    private var tvRefreshButton: some View {
+        let content = HStack(spacing: 10) {
+            if vm.isRefreshing {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: "arrow.clockwise")
+            }
+            Text("Refresh")
+        }
+        .font(.subheadline.weight(.medium))
+        .foregroundColor(.white)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+
+        Button {
+            Task {
+                let bStart = computeBaseStart(for: nowTick, day: selectedDay)
+                let vWidth = CGFloat(guideEndOfDay(selectedDay).timeIntervalSince(bStart) / 60.0) * guidePxPerMinute
+                await vm.manualRefresh(appState: appState, currentDay: selectedDay, baseStart: bStart, visibleWidth: vWidth)
+            }
+        } label: {
+            if #available(tvOS 26.0, *) {
+                content
+                    .clipShape(Capsule())
+                    .glassEffect(.regular.interactive(), in: .capsule)
+            } else {
+                content
+                    .background(Color.white.opacity(0.15))
+                    .clipShape(Capsule())
+            }
+        }
+        .buttonStyle(.plain)
+    }
     
-    // MARK: - Grid View
-    // MARK: - Grid View
     private var epgGrid: some View {
-        ScrollView(.vertical, showsIndicators: false) {
+        let gridWidth = max(visibleWidth, UIScreen.main.bounds.width)
+
+        return ScrollView(.vertical, showsIndicators: false) {
             HStack(alignment: .top, spacing: 0) {
                 
-                // Fixed Channel List
+                // Fixed Channel Column on Left
                 VStack(spacing: 0) {
-                    // Empty space for time header alignment
+                    // Date header bar aligned with timeline height
                     Color.clear.frame(height: tvHeaderHeight)
                         .overlay(
                             Text(dateFormatter.string(from: selectedDay))
-                                .font(.subheadline)
+                                .font(.subheadline.bold())
                                 .foregroundColor(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.leading, 16)
                         )
+                        .background(Color(white: 0.1))
                     
                     LazyVStack(spacing: 0) {
                         ForEach(vm.sortedChannels, id: \.id) { ch in
@@ -200,38 +235,31 @@ struct TVGuideView: View {
                 .frame(width: tvChannelWidth)
                 .zIndex(1)
                 
-                // Scrollable Timeline & Programs
+                // Scrollable Timeline & Program Grid (Hardware synced horizontally)
                 ScrollView(.horizontal, showsIndicators: false) {
-                    VStack(spacing: 0) {
-                        // Timeline Header
+                    VStack(alignment: .leading, spacing: 0) {
+                        
+                        // Timeline Header Bar
                         tvHourTicksView
                             .frame(height: tvHeaderHeight)
                             .background(Color(white: 0.1))
                         
-                        // Program Blocks Grid
+                        // Program Rows Grid
                         LazyVStack(spacing: 0) {
                             ForEach(vm.sortedChannels, id: \.id) { ch in
                                 let blocks = vm.renderBlocks[selectedDay]?[ch.id] ?? []
                                 let hasFocusedProgram = blocks.contains(where: { $0.item.id == focusedProgramId })
                                 
                                 ZStack(alignment: .topLeading) {
-                                    Color.clear.frame(width: max(visibleWidth, UIScreen.main.bounds.width), height: tvRowHeight)
+                                    Color.clear.frame(width: gridWidth, height: tvRowHeight)
                                     
-                                    // Background grid lines
+                                    // Background hour grid lines
                                     tvHourGridRow
                                     
-                                    // Render Programs
-                                    HStack(spacing: 0) {
-                                        ForEach(Array(blocks.enumerated()), id: \.element.id) { index, b in
-                                            let prevEnd = index == 0 ? 0 : (blocks[index - 1].x + blocks[index - 1].w)
-                                            let gap = max(0, b.x - prevEnd)
-                                            
-                                            if gap > 0 {
-                                                Color.clear.frame(width: gap, height: tvRowHeight)
-                                            }
-                                            
-                                            tvProgramBlock(b, channel: ch)
-                                        }
+                                    // Program Blocks positioned at absolute offsets matching timeline
+                                    ForEach(blocks) { b in
+                                        tvProgramBlock(b, channel: ch)
+                                            .offset(x: b.x, y: 0)
                                     }
                                     
                                     // Current Time Indicator
@@ -244,9 +272,9 @@ struct TVGuideView: View {
                                             .zIndex(10)
                                     }
                                 }
-                                .frame(width: max(visibleWidth, UIScreen.main.bounds.width), height: tvRowHeight)
+                                .frame(width: gridWidth, height: tvRowHeight, alignment: .topLeading)
                                 .border(Color.black, width: 0.5)
-                                .zIndex(hasFocusedProgram ? 10 : 0) // Lift row above others if it contains focused item
+                                .zIndex(hasFocusedProgram ? 10 : 0)
                             }
                         }
                     }
@@ -255,7 +283,6 @@ struct TVGuideView: View {
         }
     }
     
-    // MARK: - Components
     @ViewBuilder
     private func tvChannelRow(channel: LiveTvChannelDto) -> some View {
         let isFocused = focusedProgramId == channel.id
@@ -305,16 +332,24 @@ struct TVGuideView: View {
     private var tvHourTicksView: some View {
         let end = guideEndOfDay(selectedDay)
         let boundaries = hourBoundaries(from: baseStart, to: end)
+        let gridWidth = max(visibleWidth, UIScreen.main.bounds.width)
         
         return ZStack(alignment: .topLeading) {
+            Color.clear.frame(width: gridWidth, height: tvHeaderHeight)
+            
             ForEach(boundaries, id: \.self) { ts in
                 let mins = ts.timeIntervalSince(baseStart) / 60.0
                 let x = CGFloat(mins) * guidePxPerMinute
                 
+                Rectangle()
+                    .fill(Color.white.opacity(0.2))
+                    .frame(width: 1, height: tvHeaderHeight)
+                    .offset(x: x)
+                
                 Text(timeFormatterSmall.string(from: ts))
                     .font(.subheadline)
                     .foregroundColor(.gray)
-                    .offset(x: x + 8, y: 10)
+                    .offset(x: x + 8, y: 8)
             }
             
             if let x = nowX {
@@ -328,11 +363,13 @@ struct TVGuideView: View {
                     .offset(x: x, y: 0)
             }
         }
+        .frame(width: gridWidth, height: tvHeaderHeight, alignment: .topLeading)
     }
     
     private var tvHourGridRow: some View {
         let end = guideEndOfDay(selectedDay)
         let boundaries = hourBoundaries(from: baseStart, to: end)
+        let gridWidth = max(visibleWidth, UIScreen.main.bounds.width)
         
         return ZStack(alignment: .topLeading) {
             ForEach(boundaries, id: \.self) { ts in
@@ -345,6 +382,7 @@ struct TVGuideView: View {
                     .offset(x: x)
             }
         }
+        .frame(width: gridWidth, height: tvRowHeight, alignment: .topLeading)
     }
     
     @ViewBuilder
@@ -354,11 +392,9 @@ struct TVGuideView: View {
         
         NavigationLink(destination: TVProgramView(program: buildJFProgram(from: b.item, channel: channel), appState: appState)) {
             ZStack(alignment: .leading) {
-                // Base background
                 Rectangle()
                     .fill(isFocused ? baseColor : baseColor.opacity(0.3))
                 
-                // Border for block separation
                 Rectangle()
                     .strokeBorder(Color.black.opacity(0.5), lineWidth: 1)
                 
@@ -375,16 +411,14 @@ struct TVGuideView: View {
         .frame(width: max(0, b.w), height: tvRowHeight)
         .contentShape(RoundedRectangle(cornerRadius: 6))
         .clipShape(RoundedRectangle(cornerRadius: 6))
-        .scaleEffect(isFocused ? 1.04 : 1.0) // Pops out item
-        .zIndex(isFocused ? 100 : 1) // Elevates program block ZIndex above all others
+        .scaleEffect(isFocused ? 1.04 : 1.0)
+        .zIndex(isFocused ? 100 : 1)
         .onFocusChange { focused in
             if focused {
                 self.focusedProgramId = b.item.id
             }
         }
     }
-    
-    // MARK: - Helpers
     
     private func colorForProgram(_ program: BaseItemDto) -> Color {
         if program.isMovie == true { return Color.purple }
@@ -449,7 +483,7 @@ struct TVGuideView: View {
         let f = DateFormatter()
         f.dateFormat = "h:mma"
         f.amSymbol = "p"
-        f.pmSymbol = "p" // Mimicking "7:18p" from the image
+        f.pmSymbol = "p"
         return f
     }()
     
@@ -471,7 +505,7 @@ struct TVGuideView: View {
     }
 }
 
-// Simple shape for the playhead pointer
+// Polygon shape for current time playhead marker
 struct Polygon: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
@@ -483,7 +517,7 @@ struct Polygon: Shape {
     }
 }
 
-// tvOS custom focus extension
+// Custom Focus Modifier for tvOS
 extension View {
     func onFocusChange(_ perform: @escaping (Bool) -> Void) -> some View {
         self.modifier(FocusModifier(action: perform))
@@ -497,7 +531,6 @@ private struct FocusModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .focused($isFocused)
-            // Updated to fallback safely across SwiftUI versions while passing the focus state
             .onChange(of: isFocused) { _, newValue in
                 action(newValue)
             }
