@@ -143,12 +143,20 @@ final class ProgramRecordingViewModel: ObservableObject {
         }
         
         // Also check series timers since a series timer acts globally
-        if program.isSeries {
+        let isLikelySeries = program.isSeries || (program.seriesId != nil && !program.seriesId!.isEmpty) || (program.seriesName != nil && !program.seriesName!.isEmpty)
+        
+        if isLikelySeries {
             do {
                 let sTimers = try await JellyfinTimerCache.shared.getSeriesTimers(baseURL: cleanBaseURL, token: appState.accessToken)
-                if let existing = sTimers.first(where: { $0.Name == program.name || $0.Name == program.seriesName }) {
-                    self.activeTimerId = existing.Id
-                    self.activeTimerIsSeries = true
+                if let existing = sTimers.first(where: {
+                    ($0.SeriesId != nil && $0.SeriesId == program.seriesId) ||
+                    ($0.Name != nil && ($0.Name == program.name || $0.Name == program.seriesName)) ||
+                    ($0.ProgramId != nil && $0.ProgramId == program.id)
+                }) {
+                    if self.activeTimerId == nil {
+                        self.activeTimerId = existing.Id
+                        self.activeTimerIsSeries = true
+                    }
                 }
             } catch {
                 print("Failed to check existing series timer: \(error)")
@@ -166,9 +174,9 @@ final class ProgramRecordingViewModel: ObservableObject {
         
         var payloadToPost: [String: Any]?
         
-        // Fetch default server templates right before posting
-        let defaultEndpoint = isSeries ? "/LiveTv/SeriesTimers/Defaults" : "/LiveTv/Timers/Defaults"
-        let defaultUrl = URL(string: cleanBaseURL)?.appendingPathComponent(defaultEndpoint)
+        // Fetch default server templates right before posting.
+        // Always use "LiveTv/Timers/Defaults" as SeriesTimers/Defaults does not exist and returns a 404.
+        let defaultUrl = URL(string: cleanBaseURL)?.appendingPathComponent("LiveTv/Timers/Defaults")
         var comps = URLComponents(url: defaultUrl!, resolvingAgainstBaseURL: false)
         comps?.queryItems = [URLQueryItem(name: "programId", value: program.id)]
         
@@ -196,9 +204,13 @@ final class ProgramRecordingViewModel: ObservableObject {
             payload["RecordAnyTime"] = configuration.recordAnyTime
             payload["RecordAnyChannel"] = configuration.recordAnyChannel
             payload["RecordNewOnly"] = configuration.recordNewOnly
+            // Series timers expect ProgramId to be present so it knows what to base the rule on
+            if payload["ProgramId"] == nil {
+                payload["ProgramId"] = program.id
+            }
         }
         
-        let postEndpoint = isSeries ? "/LiveTv/SeriesTimers" : "/LiveTv/Timers"
+        let postEndpoint = isSeries ? "LiveTv/SeriesTimers" : "LiveTv/Timers"
         guard let url = URL(string: cleanBaseURL)?.appendingPathComponent(postEndpoint) else { return }
         
         var request = URLRequest(url: url)
@@ -231,14 +243,31 @@ final class ProgramRecordingViewModel: ObservableObject {
                 self.activeTimerId = timerResponse.Id
                 self.activeTimerIsSeries = isSeries
             } else {
-                self.activeTimerId = "scheduled_unknown_id"
+                // Jellyfin sometimes returns 204 No Content with no ID on success.
+                // Clear the cache and force checkExistingTimer() to fetch the REAL ID.
+                self.activeTimerId = nil
                 self.activeTimerIsSeries = isSeries
             }
             
-            Task { await JellyfinTimerCache.shared.clearCache() }
+            await JellyfinTimerCache.shared.clearCache()
+            
+            if self.activeTimerId == nil {
+                await self.checkExistingTimer()
+                
+                // If it's still missing, delay for a second to let the server index it and check once more
+                if self.activeTimerId == nil {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    await self.checkExistingTimer()
+                }
+            }
+            
+            // Absolute fallback if everything fails
+            if self.activeTimerId == nil {
+                self.activeTimerId = "scheduled_unknown_id"
+            }
             
             // Use notificationConfig to decide whether to schedule a finish notification
-            if self.activeTimerId != nil && notificationConfig.notifyOnFinish == true {
+            if self.activeTimerId != nil && self.activeTimerId != "scheduled_unknown_id" && notificationConfig.notifyOnFinish == true {
                 await scheduleFinishNotification()
             }
             
@@ -251,9 +280,15 @@ final class ProgramRecordingViewModel: ObservableObject {
     
     func cancelRecording() async {
         guard let timerId = activeTimerId, !appState.serverURL.isEmpty else { return }
+        
+        if timerId == "scheduled_unknown_id" {
+            errorMessage = "Recording is still syncing with the server. Please close and reopen to cancel."
+            return
+        }
+        
         isScheduling = true
         
-        let endpoint = activeTimerIsSeries ? "/LiveTv/SeriesTimers/\(timerId)" : "/LiveTv/Timers/\(timerId)"
+        let endpoint = activeTimerIsSeries ? "LiveTv/SeriesTimers/\(timerId)" : "LiveTv/Timers/\(timerId)"
         guard let url = URL(string: cleanBaseURL)?.appendingPathComponent(endpoint) else { return }
         
         var request = URLRequest(url: url)
@@ -267,7 +302,7 @@ final class ProgramRecordingViewModel: ObservableObject {
             if let httpResponse = response as? HTTPURLResponse {
                 if (200...299).contains(httpResponse.statusCode) {
                     self.activeTimerId = nil
-                    Task { await JellyfinTimerCache.shared.clearCache() }
+                    await JellyfinTimerCache.shared.clearCache()
                 } else {
                     let errStr = String(data: data, encoding: .utf8) ?? ""
                     errorMessage = "Failed to cancel (\(httpResponse.statusCode)): \(errStr)"

@@ -17,29 +17,63 @@ final class RecordingsViewModel: ObservableObject {
     @Published var hasDvrAccess = true
     
     private let appState: AppState
+    private var activeFetchTask: Task<Void, Never>?
     
     init(appState: AppState) {
         self.appState = appState
     }
     
+    /// Public entry point. Cancels any in-flight fetch before starting a new one so
+    /// a pull-to-refresh (or a rapid re-appear) can't race an older fetch and have
+    /// its stale result overwrite newer/optimistic state (e.g. a just-cancelled timer
+    /// reappearing because an older in-flight request finished after the cancel).
     func fetchAll() async {
+        activeFetchTask?.cancel()
+        let task = Task { await self.performFetchAll() }
+        activeFetchTask = task
+        await task.value
+    }
+
+    private func performFetchAll() async {
+        // Fire all three requests independently so each one publishes to the UI
+        // the moment IT finishes, instead of the whole view waiting on whichever
+        // endpoint happens to be slowest (previously gated behind a single
+        // `try await (timers, seriesTimers, recordings)` tuple, which blocks
+        // ALL three arrays from updating until the slowest call returns).
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await self.loadTimers() }
+            group.addTask { await self.loadSeriesTimers() }
+            group.addTask { await self.loadRecordings() }
+        }
+        isInitialLoad = false
+    }
+
+    private func loadTimers() async {
         do {
-            async let timers = fetchTimers()
-            async let seriesTimers = fetchSeriesTimers()
-            async let recordings = fetchRecordings()
-            
-            let (t, st, r) = try await (timers, seriesTimers, recordings)
-            
+            let t = try await fetchTimers()
             self.scheduledTimers = t.sorted { ($0.parsedStartDate ?? .distantFuture) < ($1.parsedStartDate ?? .distantFuture) }
-            self.scheduledSeriesTimers = st
-            self.pastRecordings = r
-            
-            isInitialLoad = false
         } catch is CancellationError {
-            // Task was cancelled (e.g., view dismissed or user refreshed rapidly).
-            // Do NOT mutate state or print error here to avoid wiping out the arrays.
+            // View disappeared / rapid refresh — leave existing state alone.
         } catch {
-            print("Fetch all failed: \(error)")
+            print("Fetch timers failed: \(error)")
+        }
+    }
+
+    private func loadSeriesTimers() async {
+        do {
+            self.scheduledSeriesTimers = try await fetchSeriesTimers()
+        } catch is CancellationError {
+        } catch {
+            print("Fetch series timers failed: \(error)")
+        }
+    }
+
+    private func loadRecordings() async {
+        do {
+            self.pastRecordings = try await fetchRecordings()
+        } catch is CancellationError {
+        } catch {
+            print("Fetch recordings failed: \(error)")
         }
     }
     

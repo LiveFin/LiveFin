@@ -35,12 +35,22 @@ init(appState: AppState) {
     _viewModel = StateObject(wrappedValue: RecordingsViewModel(appState: appState))
 }
 
+// Jellyfin's TimerInfoDto.Status is more than just "InProgress" vs "not yet" —
+// it also includes Completed, Cancelled, Error, ConflictedNotOk, etc. Filtering
+// on "!= InProgress" let dead/stale timer objects leak into "Upcoming Events"
+// as if they were still scheduled. Only statuses that represent something the
+// server actually still intends to record should show up here.
+private static let liveOrPendingStatuses: Set<String> = ["New", "InProgress", "ConflictedOk"]
+
 private var inProgressTimers: [JFTimer] {
     viewModel.scheduledTimers.filter { $0.Status == "InProgress" }
 }
 
 private var upcomingTimers: [JFTimer] {
-    viewModel.scheduledTimers.filter { $0.Status != "InProgress" }
+    viewModel.scheduledTimers.filter {
+        guard let status = $0.Status else { return true } // no status field at all — assume it's a valid pending timer
+        return status != "InProgress" && Self.liveOrPendingStatuses.contains(status)
+    }
 }
 
 var body: some View {
@@ -53,14 +63,22 @@ var body: some View {
             .pickerStyle(.segmented)
             .padding()
             
-            if viewModel.isInitialLoad && viewModel.scheduledTimers.isEmpty && viewModel.pastRecordings.isEmpty {
-                Spacer()
-                ProgressView("Loading DVR...")
-                Spacer()
-            } else if selectedTab == 0 {
-                scheduledList
+            if selectedTab == 0 {
+                if viewModel.isInitialLoad && viewModel.scheduledTimers.isEmpty && viewModel.scheduledSeriesTimers.isEmpty {
+                    Spacer()
+                    ProgressView("Loading Scheduled Recordings...")
+                    Spacer()
+                } else {
+                    scheduledList
+                }
             } else {
-                recordedList
+                if viewModel.isInitialLoad && viewModel.pastRecordings.isEmpty {
+                    Spacer()
+                    ProgressView("Loading Recordings...")
+                    Spacer()
+                } else {
+                    recordedList
+                }
             }
         }
         .navigationTitle("DVR")
