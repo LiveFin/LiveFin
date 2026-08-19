@@ -205,7 +205,7 @@ struct ProgramView: View {
     // MARK: - Sections
 
     @ViewBuilder private var imageSection: some View {
-        if program.isLikelyMovie {
+        if program.isLikelyMovie && !viewModel.effectivePrimaryImageIsLandscape {
             VStack {
                 ProgramDetailImage(program: program, refreshSeed: 0, preferredWidth: moviePreferredRequestWidth)
                     .frame(width: moviePosterWidth, height: moviePosterHeight)
@@ -231,7 +231,7 @@ struct ProgramView: View {
                 .progressViewStyle(.linear)
                 .tint(.white)
                 .background(Color.black.opacity(0.3))
-                .frame(width: program.isLikelyMovie
+                .frame(width: (program.isLikelyMovie && !viewModel.effectivePrimaryImageIsLandscape)
                        ? max(moviePosterWidth - 20, 120)
                        : ((isiPad || horizontalSizeClass == .regular) ? 240 : 160))
                 .padding(8)

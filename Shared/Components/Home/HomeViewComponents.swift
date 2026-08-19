@@ -288,13 +288,13 @@ struct HorizontalChannelsRow: View {
             ZStack {
                 ChannelImageView(baseUrl: appState.serverURL, apiKey: appState.apiKey, channelId: channel.id)
                     .frame(width: iconOuterSize, height: iconOuterSize)
-                    .blur(radius: 32)
+                    .blur(radius: iconBlurRadius)
 
                 if #available(iOS 26.0, tvOS 26.0, *) {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .glassEffect(.regular, in: .rect(cornerRadius: 16.0))
+                    RoundedRectangle(cornerRadius: iconCornerRadius, style: .continuous)
+                        .glassEffect(.regular, in: .rect(cornerRadius: iconCornerRadius))
                 } else {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    RoundedRectangle(cornerRadius: iconCornerRadius, style: .continuous)
                         .fill(.ultraThinMaterial)
                 }
 
@@ -302,7 +302,12 @@ struct HorizontalChannelsRow: View {
                     .frame(width: iconInnerSize, height: iconInnerSize)
             }
             .frame(width: iconOuterSize, height: iconOuterSize)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: iconCornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: iconCornerRadius, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.25), radius: 8, x: 0, y: 4)
             
             if channel.isFavorite {
                 Image(systemName: "heart.fill")
@@ -331,6 +336,24 @@ struct HorizontalChannelsRow: View {
         67
         #endif
     }
+    private var iconCornerRadius: CGFloat {
+        // tvOS uses 16pt on a 220pt icon; keep the same proportion on iOS
+        // instead of 16pt flat, which looked disproportionately rounded at 84pt.
+        #if os(tvOS)
+        16
+        #else
+        6
+        #endif
+    }
+    private var iconBlurRadius: CGFloat {
+        // tvOS uses 32pt blur on a 220pt icon; scale that same ratio down for
+        // iOS's smaller icon instead of reusing 32pt, which over-blurred it.
+        #if os(tvOS)
+        32
+        #else
+        12
+        #endif
+    }
     private var favoriteBadgeFont: Font {
         #if os(tvOS)
         .title2
@@ -354,6 +377,18 @@ struct ProgramCard: View {
     let style: RowStyle
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var vm: HomeViewModel
+
+    /// The row assigns .portrait to movies by default (typical poster shape). But
+    /// some Live TV movies only have a landscape/backdrop-style image from the
+    /// guide data provider — forcing those into a tall portrait frame leaves a
+    /// heavily letterboxed card. When we know (via PrimaryImageAspectRatio) that
+    /// a movie's actual art is landscape, size the card as landscape instead.
+    private var effectiveStyle: RowStyle {
+        guard style == .portrait, program.isLikelyMovie, program.primaryImageIsLandscape else {
+            return style
+        }
+        return .landscape
+    }
 
     var body: some View {
         let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
@@ -396,17 +431,25 @@ struct ProgramCard: View {
                     fallbackImage
                 }
                 
-                if isRecording {
+                if isRecording, let progress = progressRatio {
+                    // Currently airing and being recorded - show the live progress bar.
                     ZStack(alignment: .leading) {
                         Rectangle()
                             .fill(Color.black.opacity(0.35))
                             .frame(width: max(0, imageWidth - 12), height: 4)
                         Rectangle()
                             .fill(Color.red)
-                            .frame(width: max(0, (imageWidth - 12) * (progressRatio ?? 1.0)), height: 4)
+                            .frame(width: max(0, (imageWidth - 12) * progress), height: 4)
                     }
                     .clipShape(Capsule())
                     .padding(6)
+                } else if isRecording {
+                    // Scheduled but not yet airing - show a recording indicator instead of a bar.
+                    Image(systemName: "record.circle")
+                        .font(recordingIconFont)
+                        .foregroundStyle(.red)
+                        .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 1)
+                        .padding(recordingIconPadding)
                 } else if let progress = progressRatio, progress > 0, progress < 1 {
                     ZStack(alignment: .leading) {
                         Rectangle()
@@ -488,13 +531,13 @@ struct ProgramCard: View {
 
     private var imageWidth: CGFloat {
         #if os(tvOS)
-        switch style {
+        switch effectiveStyle {
         case .portrait: return 220
         case .landscapeLarge: return 560
         case .landscape: return 380
         }
         #else
-        switch style {
+        switch effectiveStyle {
         case .portrait: return 120
         case .landscapeLarge: return 350
         case .landscape: return 220
@@ -503,13 +546,13 @@ struct ProgramCard: View {
     }
     private var imageHeight: CGFloat {
         #if os(tvOS)
-        switch style {
+        switch effectiveStyle {
         case .portrait: return 330
         case .landscapeLarge: return 315
         case .landscape: return 214
         }
         #else
-        switch style {
+        switch effectiveStyle {
         case .portrait: return 180
         case .landscapeLarge: return 197
         case .landscape: return 124
@@ -536,9 +579,9 @@ struct ProgramCard: View {
 
     private var fallbackIconSize: CGFloat {
         #if os(tvOS)
-        style == .portrait ? 48 : 40
+        effectiveStyle == .portrait ? 48 : 40
         #else
-        style == .portrait ? 28 : 24
+        effectiveStyle == .portrait ? 28 : 24
         #endif
     }
     private var fallbackTextSize: CGFloat {
@@ -592,6 +635,22 @@ struct ProgramCard: View {
 
     private var isRecording: Bool {
         return program.timerId != nil || program.seriesTimerId != nil
+    }
+
+    private var recordingIconFont: Font {
+        #if os(tvOS)
+        .system(size: 30)
+        #else
+        .system(size: 16)
+        #endif
+    }
+
+    private var recordingIconPadding: CGFloat {
+        #if os(tvOS)
+        14
+        #else
+        6
+        #endif
     }
 }
 

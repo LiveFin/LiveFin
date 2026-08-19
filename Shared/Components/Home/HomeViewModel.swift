@@ -204,7 +204,7 @@ final class HomeViewModel: ObservableObject {
             var q: [URLQueryItem] = [
                 URLQueryItem(name: "IsAiring", value: "true"),
                 URLQueryItem(name: "Limit", value: "500"),
-                URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,TimerId,SeriesTimerId")
+                URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,TimerId,SeriesTimerId,PrimaryImageAspectRatio")
             ]
             if !appState.userID.isEmpty { q.append(URLQueryItem(name: "userId", value: appState.userID)) }
             comps?.queryItems = q
@@ -252,7 +252,7 @@ final class HomeViewModel: ObservableObject {
                 URLQueryItem(name: "minEndDate",   value: iso.string(from: now)),
                 URLQueryItem(name: "maxStartDate", value: iso.string(from: end)),
                 URLQueryItem(name: "Limit",        value: "500"),
-                URLQueryItem(name: "fields",       value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,TimerId,SeriesTimerId")
+                URLQueryItem(name: "fields",       value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,TimerId,SeriesTimerId,PrimaryImageAspectRatio")
             ]
             filterParam(into: &q)
             if !appState.userID.isEmpty { q.append(URLQueryItem(name: "userId", value: appState.userID)) }
@@ -273,7 +273,7 @@ final class HomeViewModel: ObservableObject {
                     URLQueryItem(name: "minEndDate",   value: iso.string(from: now)),
                     URLQueryItem(name: "maxStartDate", value: iso.string(from: end)),
                     URLQueryItem(name: "Limit",        value: "500"),
-                    URLQueryItem(name: "fields",       value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,TimerId,SeriesTimerId")
+                    URLQueryItem(name: "fields",       value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,TimerId,SeriesTimerId,PrimaryImageAspectRatio")
                 ]
                 filterParam(into: &qUtc)
                 if !appState.userID.isEmpty { qUtc.append(URLQueryItem(name: "userId", value: appState.userID)) }

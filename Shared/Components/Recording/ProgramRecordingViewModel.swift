@@ -101,11 +101,27 @@ final class ProgramRecordingViewModel: ObservableObject {
     @Published var errorMessage: String? = nil
     @Published var hasNotificationScheduled: Bool = false
     
+    // When a series rule is active AND it also has an individual timer pinned for THIS
+    // exact airing (see episodeAtRiskOfSeriesExclusion below), this tracks that pin's
+    // timer id separately from activeTimerId so it can be surfaced and cleaned up.
+    @Published var pinnedTimerId: String? = nil
+    
     let program: JFProgram
     private let appState: AppState
     
     var isRecordingScheduled: Bool {
         activeTimerId != nil
+    }
+    
+    /// True when the series rule the user is configuring (or has already created) would
+    /// likely skip recording THIS specific airing -- most commonly because "Record New
+    /// Episodes Only" is on but this particular airing is a repeat/rerun. When true,
+    /// scheduleRecording() also pins an individual timer for this exact episode alongside
+    /// the series rule so it still records regardless of the ongoing filter.
+    var episodeAtRiskOfSeriesExclusion: Bool {
+        guard configuration.isSeriesTimer, configuration.recordNewOnly else { return false }
+        let isRepeatEpisode = (program.isNew == false) || (program.isRepeat == true)
+        return isRepeatEpisode
     }
     
     init(program: JFProgram, appState: AppState) {
@@ -132,11 +148,12 @@ final class ProgramRecordingViewModel: ObservableObject {
     private func checkExistingTimer() async {
         guard !appState.serverURL.isEmpty else { return }
         
+        var individualTimerId: String? = nil
+        
         do {
             let timers = try await JellyfinTimerCache.shared.getTimers(baseURL: cleanBaseURL, token: appState.accessToken)
             if let existing = timers.first(where: { $0.ProgramId == program.id }) {
-                self.activeTimerId = existing.Id
-                self.activeTimerIsSeries = false
+                individualTimerId = existing.Id
             }
         } catch {
             print("Failed to check existing single timer: \(error)")
@@ -145,6 +162,7 @@ final class ProgramRecordingViewModel: ObservableObject {
         // Also check series timers since a series timer acts globally
         let isLikelySeries = program.isSeries || (program.seriesId != nil && !program.seriesId!.isEmpty) || (program.seriesName != nil && !program.seriesName!.isEmpty)
         
+        var seriesTimerId: String? = nil
         if isLikelySeries {
             do {
                 let sTimers = try await JellyfinTimerCache.shared.getSeriesTimers(baseURL: cleanBaseURL, token: appState.accessToken)
@@ -153,14 +171,27 @@ final class ProgramRecordingViewModel: ObservableObject {
                     ($0.Name != nil && ($0.Name == program.name || $0.Name == program.seriesName)) ||
                     ($0.ProgramId != nil && $0.ProgramId == program.id)
                 }) {
-                    if self.activeTimerId == nil {
-                        self.activeTimerId = existing.Id
-                        self.activeTimerIsSeries = true
-                    }
+                    seriesTimerId = existing.Id
                 }
             } catch {
                 print("Failed to check existing series timer: \(error)")
             }
+        }
+        
+        if let seriesId = seriesTimerId {
+            // A series rule covers this program. If an individual timer for this exact
+            // airing ALSO exists, it's a pin (created by us, or by the server) guaranteeing
+            // this specific episode records despite the series rule's own filters --
+            // surface the series timer as primary and keep the pin alongside it.
+            self.activeTimerId = seriesId
+            self.activeTimerIsSeries = true
+            self.pinnedTimerId = individualTimerId
+        } else if let individualId = individualTimerId {
+            self.activeTimerId = individualId
+            self.activeTimerIsSeries = false
+            self.pinnedTimerId = nil
+        } else {
+            self.pinnedTimerId = nil
         }
     }
     
@@ -168,6 +199,7 @@ final class ProgramRecordingViewModel: ObservableObject {
         guard !appState.serverURL.isEmpty else { return }
         isScheduling = true
         errorMessage = nil
+        pinnedTimerId = nil
         
         let isLikelySeries = program.isSeries || (program.seriesId != nil && !program.seriesId!.isEmpty) || (program.seriesName != nil && !program.seriesName!.isEmpty)
         let isSeries = configuration.isSeriesTimer && isLikelySeries
@@ -191,12 +223,13 @@ final class ProgramRecordingViewModel: ObservableObject {
             }
         }
         
-        guard var payload = payloadToPost else {
+        guard let basePayload = payloadToPost else {
             errorMessage = "Failed to fetch recording template from server."
             isScheduling = false
             return
         }
         
+        var payload = basePayload
         payload["PrePaddingSeconds"] = configuration.prePaddingSeconds
         payload["PostPaddingSeconds"] = configuration.postPaddingSeconds
         

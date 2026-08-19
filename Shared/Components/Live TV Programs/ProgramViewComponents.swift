@@ -59,6 +59,15 @@ struct JFProgram: Identifiable, Hashable {
     let itemId: String?
     let timerId: String?
     let seriesTimerId: String?
+    let primaryImageAspectRatio: Double?
+
+    /// True when the Primary image is wider than it is tall (landscape/backdrop-shaped),
+    /// as opposed to a typical tall movie poster. Falls back to false (assume portrait)
+    /// when the server hasn't given us an aspect ratio.
+    var primaryImageIsLandscape: Bool {
+        guard let ratio = primaryImageAspectRatio, ratio > 0 else { return false }
+        return ratio >= 1.0
+    }
 
     var isLikelyMovie: Bool {
         if isMovie {
@@ -134,6 +143,9 @@ struct JFProgram: Identifiable, Hashable {
         self.itemId = json["ItemId"] as? String
         self.timerId = json["TimerId"] as? String
         self.seriesTimerId = json["SeriesTimerId"] as? String
+        if let ratio = json["PrimaryImageAspectRatio"] as? Double { self.primaryImageAspectRatio = ratio }
+        else if let n = json["PrimaryImageAspectRatio"] as? NSNumber { self.primaryImageAspectRatio = n.doubleValue }
+        else { self.primaryImageAspectRatio = nil }
     }
 
     init(copying other: JFProgram, channelName: String?) {
@@ -149,6 +161,7 @@ struct JFProgram: Identifiable, Hashable {
         self.isPremiere = other.isPremiere; self.isNew = other.isNew
         self.seriesId = other.seriesId; self.itemId = other.itemId
         self.timerId = other.timerId; self.seriesTimerId = other.seriesTimerId
+        self.primaryImageAspectRatio = other.primaryImageAspectRatio
     }
 
     static func == (lhs: JFProgram, rhs: JFProgram) -> Bool { lhs.id == rhs.id }
@@ -163,6 +176,7 @@ final class ProgramViewModel: ObservableObject {
     @Published var loadRelatedImages: Bool = false
     @Published var resolvedChannelId: String? = nil
     @Published var resolvedChannelName: String? = nil
+    @Published var resolvedPrimaryImageAspectRatio: Double? = nil
     @Published var isLoadingUpcoming: Bool = true
     @Published var isLoadingRelated: Bool = true
     @Published var streamItem: StreamURLItem? = nil
@@ -184,6 +198,16 @@ final class ProgramViewModel: ObservableObject {
     }
 
     var effectiveChannelId: String? { program.channelId ?? resolvedChannelId }
+
+    /// True when the movie's actual Primary image is landscape-shaped rather than
+    /// a typical portrait poster. Prefers the aspect ratio already on `program`
+    /// (e.g. when it came from a list that requested PrimaryImageAspectRatio);
+    /// falls back to whatever ensureProgramDetails() resolved from the server.
+    var effectivePrimaryImageIsLandscape: Bool {
+        let ratio = program.primaryImageAspectRatio ?? resolvedPrimaryImageAspectRatio
+        guard let ratio, ratio > 0 else { return false }
+        return ratio >= 1.0
+    }
 
     var channelName: String {
         if let name = resolvedChannelName, !name.isEmpty { return name }
@@ -319,9 +343,15 @@ final class ProgramViewModel: ObservableObject {
         await ensureProgramDetails()
         await ensureChannelName()
         refreshScheduledNotificationCount()
-        
-        await fetchNextUpcomingPage()
-        await fetchRelatedPrograms()
+
+        // These two were previously awaited one after another, which meant
+        // "Related" never started fetching until "Upcoming" fully finished.
+        // They're mostly independent, so run them concurrently. The one spot
+        // fetchRelatedPrograms() actually needs displayedUpcoming (its
+        // fallback path) explicitly awaits upcomingTask first.
+        let upcomingTask = Task { await fetchNextUpcomingPage() }
+        await fetchRelatedPrograms(upcomingTask: upcomingTask)
+        await upcomingTask.value
 
         isLoadingUpcoming = false
         isLoadingRelated = false
@@ -404,11 +434,12 @@ final class ProgramViewModel: ObservableObject {
     }
 
     private func ensureProgramDetails() async {
-        if program.channelId != nil, (program.channelName?.isEmpty == false) { return }
+        let needsAspectRatio = program.primaryImageAspectRatio == nil
+        if program.channelId != nil, (program.channelName?.isEmpty == false), !needsAspectRatio { return }
         guard !appState.serverURL.isEmpty,
               let url = URL(string: appState.serverURL)?.appendingPathComponent("/Items/\(program.id)") else { return }
         var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        comps?.queryItems = [URLQueryItem(name: "fields", value: "ChannelId,ChannelName,RunTimeTicks,OfficialRating,Genres,SeriesName,EpisodeTitle,ParentIndexNumber,IndexNumber,IsRepeat,SeriesId,ItemId")]
+        comps?.queryItems = [URLQueryItem(name: "fields", value: "ChannelId,ChannelName,RunTimeTicks,OfficialRating,Genres,SeriesName,EpisodeTitle,ParentIndexNumber,IndexNumber,IsRepeat,SeriesId,ItemId,PrimaryImageAspectRatio")]
         var req = URLRequest(url: comps?.url ?? url); req.httpMethod = "GET"
         if !appState.accessToken.isEmpty { req.setValue(appState.getAuthorizationHeader(), forHTTPHeaderField: "Authorization") }
         do {
@@ -419,6 +450,10 @@ final class ProgramViewModel: ObservableObject {
                 if let cname = obj["ChannelName"] as? String, !cname.isEmpty {
                     resolvedChannelName = cname
                     if let cid = resolvedChannelId { appState.channelNames[cid] = cname }
+                }
+                if needsAspectRatio {
+                    if let ratio = obj["PrimaryImageAspectRatio"] as? Double { resolvedPrimaryImageAspectRatio = ratio }
+                    else if let n = obj["PrimaryImageAspectRatio"] as? NSNumber { resolvedPrimaryImageAspectRatio = n.doubleValue }
                 }
             }
         } catch { }
@@ -464,23 +499,25 @@ final class ProgramViewModel: ObservableObject {
         
         let serverURL = appState.serverURL
         let authHeader = appState.getAuthorizationHeader()
+        let channelId = effectiveChannelId
         
-        var baseParams: [URLQueryItem] = [
+        let baseParams: [URLQueryItem] = [
             URLQueryItem(name: "MinStartDate", value: minStart),
             URLQueryItem(name: "MaxStartDate", value: maxStart),
             URLQueryItem(name: "Limit", value: "3000"),
-            URLQueryItem(name: "Fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,ChannelId,ChannelName,IsRepeat,SeriesId,ItemId")
+            URLQueryItem(name: "Fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,ChannelId,ChannelName,IsRepeat,SeriesId,ItemId,PrimaryImageAspectRatio")
         ]
         
         var allFound: [JFProgram] = []
         
-        if let cid = effectiveChannelId {
+        async let channelFuture: [JFProgram] = {
+            guard let cid = channelId else { return [] }
             var p = baseParams
             p.append(URLQueryItem(name: "channelIds", value: cid))
             if let uid = appState.user?.id { p.append(URLQueryItem(name: "userId", value: uid)) }
             let sched = await fetchPrograms(serverURL: serverURL, authHeader: authHeader, params: p)
-            allFound.append(contentsOf: sched.filter { ($0.startDate ?? .distantPast) > windowStart })
-        }
+            return sched.filter { ($0.startDate ?? .distantPast) > windowStart }
+        }()
         
         async let searchFuture: [JFProgram] = {
             var p = baseParams
@@ -507,7 +544,8 @@ final class ProgramViewModel: ObservableObject {
             return await fetchPrograms(serverURL: serverURL, authHeader: authHeader, from: "/LiveTv/Programs", params: p)
         }()
         
-        let (res1, res2, res3) = await (searchFuture, seriesFuture, nameFuture)
+        let (chRes, res1, res2, res3) = await (channelFuture, searchFuture, seriesFuture, nameFuture)
+        allFound.append(contentsOf: chRes)
         allFound.append(contentsOf: res1)
         allFound.append(contentsOf: res2)
         allFound.append(contentsOf: res3)
@@ -602,7 +640,7 @@ final class ProgramViewModel: ObservableObject {
         return result
     }
 
-    private func fetchRelatedPrograms() async {
+    private func fetchRelatedPrograms(upcomingTask: Task<Void, Never>? = nil) async {
         let now = Date()
         guard let past = Calendar.current.date(byAdding: .hour, value: -6, to: now),
               let future = Calendar.current.date(byAdding: .day, value: 7, to: now) else { return }
@@ -611,7 +649,7 @@ final class ProgramViewModel: ObservableObject {
             URLQueryItem(name: "MinStartDate", value: iso.string(from: past)),
             URLQueryItem(name: "MaxStartDate", value: iso.string(from: future)),
             URLQueryItem(name: "Limit", value: "300"),
-            URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,ChannelId,ChannelName,IsRepeat,SeriesId,ItemId")
+            URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,ChannelId,ChannelName,IsRepeat,SeriesId,ItemId,PrimaryImageAspectRatio")
         ]
         
         let serverURL = appState.serverURL
@@ -677,6 +715,9 @@ final class ProgramViewModel: ObservableObject {
         }
 
         if final.isEmpty {
+            // Only path that needs displayedUpcoming — make sure the
+            // concurrently-running upcoming fetch has actually populated it.
+            await upcomingTask?.value
             var seen: Set<String> = []
             var fallback: [JFProgram] = []
             for p in displayedUpcoming.filter({ $0.id != program.id }).sorted(by: { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }) {
@@ -993,7 +1034,7 @@ struct RelatedProgramCard: View {
     #else
     private var isiPad: Bool { false }
     #endif
-    private var isMovie: Bool { program.isLikelyMovie }
+    private var isMovie: Bool { program.isLikelyMovie && !program.primaryImageIsLandscape }
     private var imageWidth: CGFloat { isMovie ? 120 : 220 }
     private var imageHeight: CGFloat { isMovie ? 180 : 124 }
 
@@ -1069,8 +1110,13 @@ struct ProgramDetailImage: View {
 
     var body: some View {
         GeometryReader { geo in
-            let baseWidth = (preferredWidth != nil && preferredWidth! > 0) ? preferredWidth! : max(200, Int(geo.size.width))
-            let requestedMaxWidth = max(200, Int(Double(baseWidth) * max(displayScale, 1.0) * 1.2))
+            // preferredWidth (when provided) is already sized for retina by the
+            // caller — don't multiply it by displayScale again, or we end up
+            // requesting images several times larger than the screen can show.
+            let requestedMaxWidth: Int = {
+                if let pw = preferredWidth, pw > 0 { return pw }
+                return max(200, Int(geo.size.width * max(displayScale, 1.0)))
+            }()
             if let url = imageURL(maxWidth: requestedMaxWidth) {
                 AsyncImage(url: url) { phase in
                     switch phase {
@@ -1108,12 +1154,18 @@ struct ProgramDetailImage: View {
         guard !appState.serverURL.isEmpty, !appState.apiKey.isEmpty else { return nil }
         let base = appState.serverURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         var comps = URLComponents(string: base + "/Items/\(program.id)/Images/Primary")
-        comps?.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "maxWidth", value: String(maxWidth)),
-            URLQueryItem(name: "ApiKey", value: appState.apiKey),
-            URLQueryItem(name: "t", value: String(Int(Date().timeIntervalSince1970))),
-            URLQueryItem(name: "seed", value: String(refreshSeed))
+            URLQueryItem(name: "ApiKey", value: appState.apiKey)
         ]
+        // Only bust the cache when the caller explicitly asks for a refresh
+        // (refreshSeed != 0). Every call site currently passes 0, so by
+        // default the URL stays stable across re-renders and AsyncImage can
+        // reuse its cached result instead of re-downloading the image.
+        if refreshSeed != 0 {
+            queryItems.append(URLQueryItem(name: "seed", value: String(refreshSeed)))
+        }
+        comps?.queryItems = queryItems
         return comps?.url
     }
 }
