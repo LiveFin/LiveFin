@@ -65,7 +65,7 @@ struct WatchProgram: Identifiable, Codable, Hashable {
     }
 }
 
-struct WatchTimer: Identifiable, Codable {
+struct WatchTimer: Identifiable, Codable, Hashable {
     let Id: String
     let ProgramId: String?
     let Name: String?
@@ -344,8 +344,8 @@ extension WatchAppState: WCSessionDelegate {
 }
 #endif
 
-// MARK: - Views
-enum WatchTab {
+// MARK: - watchOS 10 Root Navigation (Vertical Paging & Crown Navigation)
+enum WatchTab: Hashable {
     case channels
     case dvr
 }
@@ -358,25 +358,19 @@ struct WatchRootView: View {
         if !appState.isAuthenticated {
             WatchLoginView()
         } else {
+            // watchOS 10 vertical page TabView allows effortless scrolling between sections via Crown or vertical swipe
             TabView(selection: $selectedTab) {
                 NavigationStack {
                     WatchChannelsView()
                 }
                 .tag(WatchTab.channels)
-                .tabItem {
-                    Label("Channels", systemImage: "tv")
-                }
                 
                 NavigationStack {
                     WatchRecordingsView()
                 }
                 .tag(WatchTab.dvr)
-                .tabItem {
-                    Label("DVR", systemImage: "clock")
-                }
             }
-            .tabViewStyle(.automatic) // Uses the standard watchOS tab bar navigation instead of pagination pages
-            .highPriorityGesture(DragGesture()) // Disables swiping between tabs
+            .tabViewStyle(.verticalPage)
             .task {
                 await appState.loadChannelsIfNeeded(force: false)
                 await appState.fetchDVR()
@@ -423,13 +417,16 @@ struct WatchChannelsView: View {
                 Text("No channels").foregroundColor(.secondary)
             } else {
                 ForEach(appState.channels) { ch in
-                    NavigationLink(destination: WatchChannelDetailView(channel: ch).environmentObject(appState)) {
+                    NavigationLink(value: ch) {
                         WatchChannelRow(channel: ch)
                     }
                 }
             }
         }
         .navigationTitle("Channels")
+        .navigationDestination(for: WatchChannel.self) { ch in
+            WatchChannelDetailView(channel: ch)
+        }
         .refreshable { await appState.loadChannelsIfNeeded(force: true) }
     }
 }
@@ -588,268 +585,5 @@ struct WatchRecordingsView: View {
         }
         .navigationTitle("DVR")
         .refreshable { await appState.fetchDVR() }
-    }
-}
-
-// MARK: - Shared iOS Models (RecordingConfiguration.swift)
-struct RecordingConfiguration: Equatable {
-    var prePaddingSeconds: Int = 0
-    var postPaddingSeconds: Int = 0
-    var isSeriesTimer: Bool = false
-    var recordAnyTime: Bool = false
-    var recordAnyChannel: Bool = false
-    var recordNewOnly: Bool = false
-}
-
-struct NotificationConfiguration: Equatable {
-    var notificationBufferSeconds: Int = 300
-    var notifySeries: Bool = false
-    var notifyNewEpisodesOnly: Bool = false
-    var repeatNotification: Bool = false
-    var notifyOnFinish: Bool = false
-}
-
-struct JFDefaultTimerResponse: Decodable {
-    let PrePaddingSeconds: Int?
-    let PostPaddingSeconds: Int?
-}
-
-struct JFTimerResponse: Decodable {
-    let Id: String
-}
-
-struct JFTimer: Identifiable, Codable {
-    let Id: String
-    let ProgramId: String?
-    let ChannelId: String?
-    let Name: String?
-    let Overview: String?
-    let StartDate: String?
-    let EndDate: String?
-    let ChannelName: String?
-    let Status: String?
-    let PrePaddingSeconds: Int?
-    let PostPaddingSeconds: Int?
-    
-    var id: String { Id }
-    
-    var parsedStartDate: Date? {
-        guard let s = StartDate else { return nil }
-        let isoFrac = ISO8601DateFormatter()
-        isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let isoPlain = ISO8601DateFormatter()
-        isoPlain.formatOptions = [.withInternetDateTime]
-        return isoFrac.date(from: s) ?? isoPlain.date(from: s)
-    }
-    
-    var parsedEndDate: Date? {
-        guard let s = EndDate else { return nil }
-        let isoFrac = ISO8601DateFormatter()
-        isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let isoPlain = ISO8601DateFormatter()
-        isoPlain.formatOptions = [.withInternetDateTime]
-        return isoFrac.date(from: s) ?? isoPlain.date(from: s)
-    }
-}
-
-struct JFSeriesTimer: Identifiable, Codable {
-    let Id: String
-    let ChannelId: String?
-    let Name: String?
-    let RecordAnyTime: Bool?
-    let RecordNewOnly: Bool?
-    let SeriesId: String?
-    let ProgramId: String?
-    let ImageTags: [String: String]?
-    
-    var primaryImageTag: String? { ImageTags?["Primary"] }
-    var id: String { Id }
-}
-
-// MARK: - Global Coalescing Cache
-actor JellyfinTimerCache {
-    static let shared = JellyfinTimerCache()
-    
-    private var cachedTimers: [JFTimer]?
-    private var cachedTimersDate: Date?
-    private var fetchTimersTask: Task<[JFTimer], Error>?
-    
-    private var cachedSeriesTimers: [JFSeriesTimer]?
-    private var cachedSeriesTimersDate: Date?
-    private var fetchSeriesTimersTask: Task<[JFSeriesTimer], Error>?
-    
-    func getTimers(baseURL: String, token: String) async throws -> [JFTimer] {
-        if let cached = cachedTimers, let date = cachedTimersDate, Date().timeIntervalSince(date) < 30 { return cached }
-        if let existingTask = fetchTimersTask { return try await existingTask.value }
-        
-        let task = Task<[JFTimer], Error> {
-            guard let url = URL(string: baseURL)?.appendingPathComponent("LiveTv/Timers") else { return [] }
-            var req = URLRequest(url: url)
-            let authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"iOS\", DeviceId=\"livefin-ios\", Version=\"1.0\", Token=\"\(token)\""
-            req.setValue(authHeader, forHTTPHeaderField: "Authorization")
-            let (data, _) = try await URLSession.shared.data(for: req)
-            struct JFQueryResult: Decodable { let Items: [JFTimer] }
-            return try JSONDecoder().decode(JFQueryResult.self, from: data).Items
-        }
-        fetchTimersTask = task
-        do {
-            let items = try await task.value
-            cachedTimers = items; cachedTimersDate = Date(); fetchTimersTask = nil
-            return items
-        } catch { fetchTimersTask = nil; throw error }
-    }
-    
-    func getSeriesTimers(baseURL: String, token: String) async throws -> [JFSeriesTimer] {
-        if let cached = cachedSeriesTimers, let date = cachedSeriesTimersDate, Date().timeIntervalSince(date) < 30 { return cached }
-        if let existingTask = fetchSeriesTimersTask { return try await existingTask.value }
-        
-        let task = Task<[JFSeriesTimer], Error> {
-            guard let url = URL(string: baseURL)?.appendingPathComponent("LiveTv/SeriesTimers") else { return [] }
-            var req = URLRequest(url: url)
-            let authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"iOS\", DeviceId=\"livefin-ios\", Version=\"1.0\", Token=\"\(token)\""
-            req.setValue(authHeader, forHTTPHeaderField: "Authorization")
-            let (data, _) = try await URLSession.shared.data(for: req)
-            struct JFQueryResult: Decodable { let Items: [JFSeriesTimer] }
-            return try JSONDecoder().decode(JFQueryResult.self, from: data).Items
-        }
-        fetchSeriesTimersTask = task
-        do {
-            let items = try await task.value
-            cachedSeriesTimers = items; cachedSeriesTimersDate = Date(); fetchSeriesTimersTask = nil
-            return items
-        } catch { fetchSeriesTimersTask = nil; throw error }
-    }
-    
-    func clearCache() {
-        cachedTimers = nil
-        cachedSeriesTimers = nil
-    }
-}
-
-// MARK: - iOS View Models
-protocol AppStateProtocol { var serverURL: String { get } ; var accessToken: String { get } }
-class AppState: AppStateProtocol { var serverURL = ""; var accessToken = "" }
-struct JFItemDto: Codable {}
-struct JFProgram: Codable { let id: String; let name: String; let isSeries: Bool; let seriesId: String?; let seriesName: String?; let startDate: Date?; let endDate: Date?; let runTimeSeconds: TimeInterval; let isNew: Bool?; let channelName: String? }
-
-@MainActor
-final class RecordingsViewModel: ObservableObject {
-    @Published var scheduledTimers: [JFTimer] = []
-    @Published var scheduledSeriesTimers: [JFSeriesTimer] = []
-    
-    @Published var isInitialLoad = true
-    @Published var hasDvrAccess = true
-    
-    private let appState: AppState
-    
-    init(appState: AppState) {
-        self.appState = appState
-    }
-    
-    private func setAuthHeader(on request: inout URLRequest) {
-        if !appState.accessToken.isEmpty {
-            let authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"iOS\", DeviceId=\"livefin-ios\", Version=\"1.0\", Token=\"\(appState.accessToken)\""
-            request.setValue(authHeader, forHTTPHeaderField: "Authorization")
-        }
-    }
-    
-    func fetchAll() async {
-        do {
-            async let timers = fetchTimers()
-            async let seriesTimers = fetchSeriesTimers()
-            
-            let (t, st) = try await (timers, seriesTimers)
-            
-            self.scheduledTimers = t.sorted { ($0.parsedStartDate ?? .distantFuture) < ($1.parsedStartDate ?? .distantFuture) }
-            self.scheduledSeriesTimers = st
-            
-            isInitialLoad = false
-        } catch is CancellationError {
-            // Ignored
-        } catch {
-            print("Fetch all failed: \(error)")
-        }
-    }
-    
-    private func fetchTimers() async throws -> [JFTimer] {
-        let cleanBaseURL = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
-        guard let url = URL(string: cleanBaseURL)?.appendingPathComponent("LiveTv/Timers") else { return [] }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        setAuthHeader(on: &request)
-        
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
-                Task { @MainActor in self.hasDvrAccess = false }
-                return []
-            }
-            struct JFQueryResult<T: Codable>: Codable { let Items: [T] }
-            return try JSONDecoder().decode(JFQueryResult<JFTimer>.self, from: data).Items
-        } catch {
-            if let urlError = error as? URLError, urlError.code == .cancelled { throw CancellationError() }
-            return []
-        }
-    }
-    
-    private func fetchSeriesTimers() async throws -> [JFSeriesTimer] {
-        let cleanBaseURL = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
-        guard let url = URL(string: cleanBaseURL)?.appendingPathComponent("LiveTv/SeriesTimers") else { return [] }
-        
-        var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        comps?.queryItems = [URLQueryItem(name: "Fields", value: "SeriesId,ProgramId,Overview,ImageTags")]
-        
-        guard let requestUrl = comps?.url else { return [] }
-        var request = URLRequest(url: requestUrl)
-        request.httpMethod = "GET"
-        setAuthHeader(on: &request)
-        
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
-                Task { @MainActor in self.hasDvrAccess = false }
-                return []
-            }
-            struct JFQueryResult<T: Codable>: Codable { let Items: [T] }
-            return try JSONDecoder().decode(JFQueryResult<JFSeriesTimer>.self, from: data).Items
-        } catch {
-            if let urlError = error as? URLError, urlError.code == .cancelled { throw CancellationError() }
-            return []
-        }
-    }
-    
-    func cancelTimer(id: String) async {
-        let cleanBaseURL = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
-        guard let url = URL(string: cleanBaseURL)?.appendingPathComponent("LiveTv/Timers/\(id)") else { return }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "DELETE"
-        setAuthHeader(on: &request)
-        
-        do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) {
-                self.scheduledTimers.removeAll { $0.Id == id }
-                Task { await JellyfinTimerCache.shared.clearCache() }
-            }
-        } catch {}
-    }
-    
-    func cancelSeriesTimer(id: String) async {
-        let cleanBaseURL = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
-        guard let url = URL(string: cleanBaseURL)?.appendingPathComponent("LiveTv/SeriesTimers/\(id)") else { return }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "DELETE"
-        setAuthHeader(on: &request)
-        
-        do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) {
-                self.scheduledSeriesTimers.removeAll { $0.Id == id }
-                Task { await JellyfinTimerCache.shared.clearCache() }
-            }
-        } catch {}
     }
 }

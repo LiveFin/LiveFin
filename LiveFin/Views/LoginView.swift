@@ -9,8 +9,12 @@ import SwiftUI
 import JellyfinAPI
 import Foundation
 import Get
+#if canImport(UIKit)
+import UIKit
+#endif
 
 enum LoginStep {
+    case splash
     case server
     case userSelection
     case password
@@ -23,69 +27,99 @@ struct LoginView: View {
     
     // Persistent Storage
     @AppStorage("lastUsedServer") private var lastUsedServer: String = ""
+    @AppStorage("recentServers") private var recentServersJSON: String = "[]"
     
     // Form States
-    @State private var server = ""
-    @State private var username = ""
-    @State private var password = ""
+    @State private var server: String = ""
+    @State private var username: String = ""
+    @State private var password: String = ""
     
     // Quick Connect States
-    @State private var quickConnectCode = ""
-    @State private var quickConnectSecret = ""
-    @State private var quickConnectTimer: Timer?
+    @State private var quickConnectCode: String = ""
+    @State private var quickConnectSecret: String = ""
+    @State private var quickConnectTimer: Timer? = nil
     
     // Status States
-    @State private var error: String?
-    @State private var isFetchingUsers = false
-    @State private var isLoggingIn = false
+    @State private var error: String? = nil
+    @State private var isFetchingUsers: Bool = false
+    @State private var isLoggingIn: Bool = false
     
-    // Flow States
-    @State private var step: LoginStep = .server
+    // Flow States (Starts on the splash screen)
+    @State private var step: LoginStep = .splash
     @State private var publicUsers: [PublicUser] = []
     @State private var selectedUser: PublicUser? = nil
+    
+    private var recentServers: [String] {
+        get {
+            guard let data = recentServersJSON.data(using: .utf8),
+                  let list = try? JSONDecoder().decode([String].self, from: data) else {
+                return lastUsedServer.isEmpty ? [] : [lastUsedServer]
+            }
+            return list
+        }
+        nonmutating set {
+            if let data = try? JSONEncoder().encode(newValue),
+               let string = String(data: data, encoding: .utf8) {
+                recentServersJSON = string
+            }
+        }
+    }
     
     var body: some View {
         NavigationStack {
             ZStack {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Login to your Jellyfin server")
-                        .font(.title2.bold())
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Color(hex: "#AA5CC3"), Color(hex: "#00A4DC")],
-                                startPoint: .leading,
-                                endPoint: .trailing
+                if step == .splash {
+                    splashScreenView
+                        .transition(.opacity)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Login to your Jellyfin server")
+                            .font(.title2.bold())
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [Color(hex: "#AA5CC3"), Color(hex: "#00A4DC")],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
                             )
-                        )
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal)
-                        .padding(.top, 24)
-                        .padding(.bottom, 16)
-                    
-                    Group {
-                        switch step {
-                        case .server:
-                            serverEntryView
-                        case .userSelection:
-                            userSelectionView
-                        case .password:
-                            passwordEntryView
-                        case .manual:
-                            manualLoginView
-                        case .quickConnect:
-                            quickConnectView
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal)
+                            .padding(.top, 24)
+                            .padding(.bottom, 16)
+                        
+                        Group {
+                            switch step {
+                            case .splash:
+                                EmptyView()
+                            case .server:
+                                serverEntryView
+                            case .userSelection:
+                                userSelectionView
+                            case .password:
+                                passwordEntryView
+                            case .manual:
+                                manualLoginView
+                            case .quickConnect:
+                                quickConnectView
+                            }
                         }
                     }
-                    .transition(.opacity)
+                    .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
+                                            removal: .opacity))
                 }
             }
+            .animation(.easeInOut(duration: 0.3), value: step)
         }
         .onAppear {
             appState.restoreLogin()
             
-            if !appState.isLoggedIn && !lastUsedServer.isEmpty {
-                server = lastUsedServer
-                connectToServer()
+            // Auto-fill stored server for when they proceed
+            if server.isEmpty {
+                if let first = recentServers.first, !first.isEmpty {
+                    server = first
+                } else if !lastUsedServer.isEmpty {
+                    server = lastUsedServer
+                }
             }
         }
         .onDisappear {
@@ -105,6 +139,96 @@ struct LoginView: View {
         }
     }
     
+    // MARK: - Reusable Error Banner
+    @ViewBuilder
+    private func errorBanner(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.red)
+                .font(.subheadline)
+            
+            Text(message)
+                .foregroundColor(.red)
+                .font(.footnote)
+                .fixedSize(horizontal: false, vertical: true)
+            
+            Spacer()
+        }
+        .padding(10)
+        .background(Color.red.opacity(0.12))
+        .cornerRadius(8)
+    }
+
+    // MARK: - Splash Screen View
+    private var isPad: Bool {
+        #if canImport(UIKit)
+        return UIDevice.current.userInterfaceIdiom == .pad
+        #else
+        return false
+        #endif
+    }
+    
+    private var splashScreenView: some View {
+        ZStack {
+            // Adaptive Device Background
+            Image(isPad ? "SplashBackgroundiPad" : "SplashBackgroundiOS")
+                .resizable()
+                .scaledToFill()
+                .ignoresSafeArea()
+            
+            VStack {
+                // Reduced top spacing to place logo higher toward the top
+                Spacer()
+                    .frame(height: isPad ? 70 : 48)
+                
+                // Enlarged LiveFin Logo positioned toward top
+                Image("Logo with Text")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: isPad ? 360 : 270)
+                    .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 7)
+                    .padding(.horizontal, 24)
+                
+                // Expanded bottom spacer to push CTA to bottom
+                Spacer()
+                
+                // "Login with Jellyfin" CTA Button
+                Button {
+                    withAnimation {
+                        let targetServer = !server.isEmpty ? server : (recentServers.first ?? lastUsedServer)
+                        if !targetServer.isEmpty {
+                            server = targetServer
+                            connectToServer()
+                        } else {
+                            step = .server
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 12) {
+                        // Jellyfin Brand Icon
+                        Image("Jellyfin Logo")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 28, height: 28)
+                        
+                        Text("Login with Jellyfin")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(Color(.label))
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color(.systemBackground).opacity(0.95))
+                            .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 6)
+                    )
+                }
+                .buttonStyle(.plain)
+                .padding(.bottom, isPad ? 56 : 40)
+            }
+        }
+    }
+
     // MARK: - Step 1: Server Entry
     private var serverEntryView: some View {
         Form {
@@ -116,9 +240,7 @@ struct LoginView: View {
                     .onSubmit { connectToServer() }
                 
                 if let error = error {
-                    Text(error)
-                        .foregroundColor(.red)
-                        .font(.caption)
+                    errorBanner(error)
                 }
                 
                 Button("Connect") {
@@ -132,6 +254,42 @@ struct LoginView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
             }
+            
+            if !recentServers.isEmpty {
+                Section(header: Text("Recent Servers")) {
+                    ForEach(recentServers, id: \.self) { savedServer in
+                        Button {
+                            server = savedServer
+                            connectToServer()
+                        } label: {
+                            HStack(spacing: 12) {
+                                Text(savedServer)
+                                    .foregroundColor(.primary)
+                                    .font(.subheadline)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                
+                                Spacer()
+                                
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2.bold())
+                                    .foregroundColor(.secondary.opacity(0.7))
+                            }
+                        }
+                    }
+                    .onDelete(perform: deleteRecentServer)
+                }
+            }
+            
+            Section {
+                Button("Back to Splash") {
+                    withAnimation {
+                        step = .splash
+                        error = nil
+                    }
+                }
+                .foregroundColor(.secondary)
+            }
         }
     }
     
@@ -139,6 +297,11 @@ struct LoginView: View {
     private var userSelectionView: some View {
         Form {
             Section(header: Text("Who's watching?").font(.headline)) {
+                if let error = error {
+                    errorBanner(error)
+                        .padding(.vertical, 4)
+                }
+                
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: 16) {
                         ForEach(publicUsers) { user in
@@ -262,11 +425,12 @@ struct LoginView: View {
             Section {
                 SecureField("Password", text: $password)
                     .onSubmit { performLogin(targetUsername: selectedUser?.Name) }
+                    .onChange(of: password) { _ in
+                        if error != nil { error = nil }
+                    }
                 
                 if let error = error {
-                    Text(error)
-                        .foregroundColor(.red)
-                        .font(.caption)
+                    errorBanner(error)
                 }
                 
                 Button("Sign In") {
@@ -300,20 +464,24 @@ struct LoginView: View {
                 TextField("Username", text: $username)
                     .autocapitalization(.none)
                     .disableAutocorrection(true)
+                    .onChange(of: username) { _ in
+                        if error != nil { error = nil }
+                    }
                 
                 SecureField("Password", text: $password)
                     .onSubmit { performLogin(targetUsername: username) }
+                    .onChange(of: password) { _ in
+                        if error != nil { error = nil }
+                    }
                 
                 if let error = error {
-                    Text(error)
-                        .foregroundColor(.red)
-                        .font(.caption)
+                    errorBanner(error)
                 }
                 
                 Button("Sign In") {
                     performLogin(targetUsername: username)
                 }
-                .disabled(isLoggingIn || username.isEmpty)
+                .disabled(isLoggingIn || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 
                 if isLoggingIn {
                     ProgressView("Signing in...")
@@ -358,10 +526,7 @@ struct LoginView: View {
                     }
                     
                     if let error = error {
-                        Text(error)
-                            .foregroundColor(.red)
-                            .font(.caption)
-                            .multilineTextAlignment(.center)
+                        errorBanner(error)
                     }
                     
                     if !quickConnectCode.isEmpty && !isLoggingIn {
@@ -406,14 +571,10 @@ struct LoginView: View {
         }
         
         var request = URLRequest(url: url)
-        // FIX: Jellyfin v12 requires a POST request to initiate Quick Connect, not a GET request.
         request.httpMethod = "POST"
-        // FIX: Provide a Content-Length to avoid server hangups on an empty body.
         request.setValue("0", forHTTPHeaderField: "Content-Length")
         
-        // FIX: Fallback to UUID if appState.deviceId happens to be empty to prevent v12 from crashing with System.ArgumentNullException.
         let safeDeviceId = appState.deviceId.isEmpty ? UUID().uuidString : appState.deviceId
-        
         let authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"\(appState.clientDevice)\", DeviceId=\"\(safeDeviceId)\", Version=\"\(appState.clientVersion)\""
         request.setValue(authHeader, forHTTPHeaderField: "Authorization")
         
@@ -477,9 +638,7 @@ struct LoginView: View {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        // Match the safe DeviceId usage
         let safeDeviceId = appState.deviceId.isEmpty ? UUID().uuidString : appState.deviceId
-        
         let authHeader = "MediaBrowser Client=\"LiveFin\", Device=\"\(appState.clientDevice)\", DeviceId=\"\(safeDeviceId)\", Version=\"\(appState.clientVersion)\""
         request.setValue(authHeader, forHTTPHeaderField: "Authorization")
         
@@ -578,6 +737,26 @@ struct LoginView: View {
             .background(Circle().fill(Color.white))
     }
 
+    // MARK: - Recent Servers Management
+    private func saveServerToRecent(_ serverUrl: String) {
+        let clean = normalizeURL(serverUrl)
+        guard !clean.isEmpty else { return }
+        var current = recentServers
+        current.removeAll { $0.caseInsensitiveCompare(clean) == .orderedSame }
+        current.insert(clean, at: 0)
+        if current.count > 5 {
+            current = Array(current.prefix(5))
+        }
+        recentServers = current
+        lastUsedServer = clean
+    }
+    
+    private func deleteRecentServer(at offsets: IndexSet) {
+        var list = recentServers
+        list.remove(atOffsets: offsets)
+        recentServers = list
+    }
+
     // MARK: - URL Normalization
     private func normalizeURL(_ urlString: String) -> String {
         var str = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -585,13 +764,10 @@ struct LoginView: View {
         
         let lower = str.lowercased()
         if !lower.hasPrefix("http://") && !lower.hasPrefix("https://") {
-            // Smart check for local IPs and local hostnames
             let isIPv4 = lower.range(of: "^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}(:[0-9]+)?$", options: .regularExpression) != nil
             let isIPv6 = lower.hasPrefix("[")
             let isLocal = lower.hasPrefix("localhost") || lower.contains(".local")
             
-            // If it looks like a local/private network server, default to http://
-            // For everything else (e.g. valid external domains), default to https://
             if isIPv4 || isIPv6 || isLocal {
                 str = "http://" + str
             } else {
@@ -617,15 +793,25 @@ struct LoginView: View {
         }
         
         server = normalizeURL(server)
-        guard !server.isEmpty else { return }
+        guard !server.isEmpty else {
+            withAnimation { step = .server }
+            return
+        }
         
         Task {
-            isFetchingUsers = true
-            error = nil
-            defer { isFetchingUsers = false }
+            await MainActor.run {
+                isFetchingUsers = true
+                error = nil
+            }
+            defer {
+                Task { @MainActor in isFetchingUsers = false }
+            }
             
             guard let url = URL(string: server + "/Users/Public") else {
-                error = "Invalid server URL Format"
+                await MainActor.run {
+                    error = "Invalid server URL format"
+                    withAnimation { step = .server }
+                }
                 return
             }
             
@@ -635,14 +821,17 @@ struct LoginView: View {
             do {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let httpResponse = response as? HTTPURLResponse else {
-                    error = "Invalid response from server."
+                    await MainActor.run {
+                        error = "Invalid response from server."
+                        withAnimation { step = .server }
+                    }
                     return
                 }
                 
                 if httpResponse.statusCode == 200 {
                     let users = try JSONDecoder().decode([PublicUser].self, from: data)
                     await MainActor.run {
-                        self.lastUsedServer = self.server
+                        self.saveServerToRecent(self.server)
                         self.publicUsers = users
                         withAnimation {
                             if users.isEmpty {
@@ -654,15 +843,14 @@ struct LoginView: View {
                     }
                 } else {
                     await MainActor.run {
-                        self.lastUsedServer = self.server
+                        self.saveServerToRecent(self.server)
                         withAnimation { self.step = .manual }
                     }
                 }
             } catch {
                 await MainActor.run {
-                    if step == .server {
-                        self.error = "Could not connect: \(error.localizedDescription)"
-                    }
+                    self.error = "Could not connect: \(error.localizedDescription)"
+                    withAnimation { step = .server }
                 }
             }
         }
@@ -671,19 +859,37 @@ struct LoginView: View {
     // MARK: - Login Logic
     private func performLogin(targetUsername: String?) {
         let userToLogin = targetUsername ?? self.username
+        guard !userToLogin.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            self.error = "Username cannot be empty."
+            return
+        }
+        
         Task {
-            isLoggingIn = true
-            error = nil
-            defer { isLoggingIn = false }
+            await MainActor.run {
+                isLoggingIn = true
+                error = nil
+            }
             
             let finalServer = normalizeURL(server)
             if let url = URL(string: finalServer) {
                 await appState.login(server: url, username: userToLogin, password: password)
-                if let loginError = appState.loginError {
-                    error = loginError
+                
+                await MainActor.run {
+                    isLoggingIn = false
+                    if !appState.isLoggedIn {
+                        // Display server-provided message if available, otherwise show clear authentication warning
+                        if let loginError = appState.loginError, !loginError.isEmpty {
+                            self.error = loginError
+                        } else {
+                            self.error = "Invalid username or password. Please try again."
+                        }
+                    }
                 }
             } else {
-                error = "Invalid server URL"
+                await MainActor.run {
+                    isLoggingIn = false
+                    self.error = "Invalid server URL"
+                }
             }
         }
     }
