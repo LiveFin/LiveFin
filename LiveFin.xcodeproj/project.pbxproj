@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 110;
+	objectVersion = 100;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -374,7 +374,7 @@
 				EBCC8A7E2DA88B95003DF1A6 /* XCRemoteSwiftPackageReference "jellyfin-sdk-swift" */,
 				EBCC8A842DA96727003DF1A6 /* XCRemoteSwiftPackageReference "nuke" */,
 			);
-			preferredProjectObjectVersion = 110;
+			preferredProjectObjectVersion = 100;
 			productRefGroup = EBCC8A0D2DA88899003DF1A6 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
