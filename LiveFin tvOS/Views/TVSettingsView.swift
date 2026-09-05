@@ -2,7 +2,7 @@
 //  TVSettingsView.swift
 //  LiveFin
 //
-//  Created by Kervens on 7/21/26.
+//  Created by KPGamingz on 7/21/26.
 //
 
 import SwiftUI

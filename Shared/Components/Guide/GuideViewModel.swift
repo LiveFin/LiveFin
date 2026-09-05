@@ -2,22 +2,21 @@
 //  GuideViewModel.swift
 //  LiveFin
 //
-//  Created by Kervens on 7/18/26.
-//
 
 import SwiftUI
 import Combine
+import Foundation
 import JellyfinAPI
 
 #if os(iOS)
 import UIKit
 #endif
 
-// MARK: - Global Shared Constants
 let guidePxPerMinute: CGFloat = 6
 let guideChannelLabelWidth: CGFloat = 86
 let guideRowHeight: CGFloat = 72
 let guideHeaderHeight: CGFloat = 28
+let guideChannelChunkSize: Int = 20
 
 let guideIso8601InternetDateTime: ISO8601DateFormatter = {
     let f = ISO8601DateFormatter()
@@ -38,16 +37,20 @@ private let timeRangeShortFormatter: DateFormatter = {
     return f
 }()
 
-// MARK: - Global Helpers
-func guideStartOfDay(_ date: Date) -> Date { Calendar.current.startOfDay(for: date) }
-func guideEndOfDay(_ date: Date) -> Date { Calendar.current.date(byAdding: .day, value: 1, to: guideStartOfDay(date)) ?? date.addingTimeInterval(24*3600) }
-
 private let dayLabelFormatter: DateFormatter = {
     let f = DateFormatter()
     f.dateStyle = .medium
     f.timeStyle = .none
     return f
 }()
+
+func guideStartOfDay(_ date: Date) -> Date {
+    Calendar.current.startOfDay(for: date)
+}
+
+func guideEndOfDay(_ date: Date) -> Date {
+    Calendar.current.date(byAdding: .day, value: 1, to: guideStartOfDay(date)) ?? date.addingTimeInterval(24 * 3600)
+}
 
 func guideFormatDayLabel(_ d: Date) -> String {
     let cal = Calendar.current
@@ -56,13 +59,18 @@ func guideFormatDayLabel(_ d: Date) -> String {
     return dayLabelFormatter.string(from: d)
 }
 
-// MARK: - Caching Configuration
-private let channelsCacheTTL: TimeInterval = 3600 // 1h
-private let epgCacheTTL: TimeInterval = 30 * 60
-private let epgKeepDays: Int = 14
+private let channelsCacheTTL: TimeInterval = 3600 // 1 hour
+private let epgCacheTTL: TimeInterval = 30 * 60 // 30 minutes
 
-private struct LiveTvChannelsResponse: Codable { let items: [LiveTvChannelDto]?; enum CodingKeys: String, CodingKey { case items = "Items" } }
-private struct EPGProgramsResponse: Codable { let items: [BaseItemDto]?; enum CodingKeys: String, CodingKey { case items = "Items" } }
+private struct LiveTvChannelsResponse: Codable {
+    let items: [LiveTvChannelDto]?
+    enum CodingKeys: String, CodingKey { case items = "Items" }
+}
+
+private struct EPGProgramsResponse: Codable {
+    let items: [BaseItemDto]?
+    enum CodingKeys: String, CodingKey { case items = "Items" }
+}
 
 private let guideCacheFolder = "GuideCache"
 private let epgFilePrefix = "epg_day_"
@@ -79,8 +87,13 @@ private func guideCacheDirectory() throws -> URL {
     return dir
 }
 
-private func channelsCacheURL() throws -> URL { try guideCacheDirectory().appendingPathComponent(channelsCacheFile) }
-private func epgCacheURL(forDayKey key: String) throws -> URL { try guideCacheDirectory().appendingPathComponent(epgFilePrefix + key + epgFileExt) }
+private func channelsCacheURL() throws -> URL {
+    try guideCacheDirectory().appendingPathComponent(channelsCacheFile)
+}
+
+private func epgCacheURL(forDayKey key: String) throws -> URL {
+    try guideCacheDirectory().appendingPathComponent(epgFilePrefix + key + epgFileExt)
+}
 
 private let dayFileFormatter: DateFormatter = {
     let df = DateFormatter()
@@ -101,8 +114,16 @@ private let iso8601WithFractional: ISO8601DateFormatter = {
 }()
 private let iso8601Basic = ISO8601DateFormatter()
 
-private struct ChannelCacheFile: Codable { let timestamp: Date; let items: [LiveTvChannelDto] }
-private struct EPGCacheFile: Codable { let dayKey: String; let timestamp: Date; let items: [BaseItemDto] }
+private struct ChannelCacheFile: Codable {
+    let timestamp: Date
+    let items: [LiveTvChannelDto]
+}
+
+private struct EPGCacheFile: Codable {
+    let dayKey: String
+    let timestamp: Date
+    let items: [BaseItemDto]
+}
 
 struct RenderBlock: Identifiable, Equatable {
     let id: String
@@ -124,7 +145,7 @@ struct RenderBlock: Identifiable, Equatable {
     }
 }
 
-private func backgroundProgramColor(_ program: BaseItemDto) -> Color {
+func backgroundProgramColor(_ program: BaseItemDto) -> Color {
     if program.isMovie == true { return Color.purple }
     if let genres = program.genres {
         let lower = genres.map { $0.lowercased() }
@@ -276,7 +297,6 @@ private func guidePrefetchChannelLogos(_ channels: [LiveTvChannelDto], baseURL: 
 }
 #endif
 
-// MARK: - Main Guide ViewModel
 @MainActor
 class GuideViewModel: ObservableObject {
     static let shared = GuideViewModel()
@@ -291,9 +311,12 @@ class GuideViewModel: ObservableObject {
     @Published var isRefreshing: Bool = false
     @Published var errorMessage: String?
 
+    // Chunk tracking per day key
+    private var loadedChunksPerDay: [String: Set<Int>] = [:]
+    private var inFlightChunkTasks: Set<String> = []
     private var hasLoadedChannels = false
-    private var fetchingDays: Set<Date> = []
     private var collapseTasks: [Date: Task<[String: [RenderBlock]], Never>] = [:]
+    private var activePrefetchTask: Task<Void, Never>?
 
     private init() {}
 
@@ -307,44 +330,38 @@ class GuideViewModel: ObservableObject {
         }
         
         let today = guideStartOfDay(Date())
-        if groupedPrograms[today] == nil {
-            _ = await loadProgramsFromCache(for: today)
+        let hasCachedProgs = await loadProgramsFromCache(for: today)
+        
+        if hasCachedProgs {
+            await scheduleCollapsePrograms(for: today, baseStart: baseStart, visibleWidth: visibleWidth)
+            isLoading = false
+        }
+
+        if !hasLoadedChannels {
+            await loadChannels(appState: appState)
+        }
+
+        // Fetch chunk 0 for today if cache is empty or stale
+        if !hasCachedProgs || !epgCacheIsFresh(for: today) {
+            await fetchEPGSingleChunk(chunkIndex: 0, for: today, appState: appState, baseStart: baseStart, visibleWidth: visibleWidth)
         }
         
-        await scheduleCollapsePrograms(for: today, baseStart: baseStart, visibleWidth: visibleWidth)
-
-        // Cold start: nothing was on disk to load (fresh install or first login on this device).
-        // In that case don't just drop isLoading and leave an empty guide on screen — do a real
-        // fetch inline so the person actually sees data instead of the "No channels available" state.
-        let isColdStart = !hasLoadedChannels || groupedPrograms[today] == nil
-
-        if isColdStart {
-            async let channelTask: () = loadChannels(appState: appState)
-            async let epgTask: () = fetchEPG(for: today, appState: appState, updateUI: false)
-            _ = await (channelTask, epgTask)
-            await scheduleCollapsePrograms(for: today, baseStart: baseStart, visibleWidth: visibleWidth)
-        }
-
         isLoading = false
 
-        Task.detached(priority: .userInitiated) {
-            async let channelTask: () = {
-                if !isColdStart { await self.loadChannels(appState: appState) }
-            }()
-            async let epgTask: () = {
-                if !isColdStart && !self.epgCacheIsFresh(for: today) {
-                    await self.fetchEPG(for: today, appState: appState, updateUI: false)
-                    await self.scheduleCollapsePrograms(for: today, baseStart: baseStart, visibleWidth: visibleWidth)
-                }
-            }()
-            
-            _ = await (channelTask, epgTask)
-            await self.prefetchAdjacentDays(around: today, appState: appState)
+        activePrefetchTask?.cancel()
+        activePrefetchTask = Task { [weak self] in
+            guard let self = self else { return }
+            if !self.channelsCacheIsFresh() {
+                await self.loadChannels(appState: appState)
+            }
+            guard !Task.isCancelled else { return }
             self.pruneOldEPGCacheFiles()
         }
     }
 
     func switchDay(_ day: Date, appState: AppState, visibleWidth: CGFloat, baseStart: Date) async {
+        let dayK = dayKey(from: day)
+        
         if groupedPrograms[day] == nil {
             _ = await loadProgramsFromCache(for: day)
         }
@@ -353,17 +370,17 @@ class GuideViewModel: ObservableObject {
             await scheduleCollapsePrograms(for: day, baseStart: baseStart, visibleWidth: visibleWidth)
         }
         
-        if !epgCacheIsFresh(for: day) {
-            Task {
-                await fetchEPG(for: day, appState: appState, updateUI: false)
-                await scheduleCollapsePrograms(for: day, baseStart: baseStart, visibleWidth: visibleWidth)
-            }
+        // If not loaded yet, fetch initial chunk 0 for this day
+        if (loadedChunksPerDay[dayK] ?? []).isEmpty && !epgCacheIsFresh(for: day) {
+            await fetchEPGSingleChunk(chunkIndex: 0, for: day, appState: appState, baseStart: baseStart, visibleWidth: visibleWidth)
         }
-        Task { await prefetchAdjacentDays(around: day, appState: appState) }
     }
 
     func manualRefresh(appState: AppState, currentDay: Date, baseStart: Date, visibleWidth: CGFloat) async {
         isRefreshing = true
+        let dayK = dayKey(from: currentDay)
+        loadedChunksPerDay[dayK] = []
+
         try? FileManager.default.removeItem(at: channelsCacheURL())
         if let url = try? epgCacheFileURL(for: currentDay) {
             try? FileManager.default.removeItem(at: url)
@@ -372,12 +389,132 @@ class GuideViewModel: ObservableObject {
         groupedPrograms[currentDay] = nil
         renderBlocks[currentDay] = nil
         
-        async let c: () = loadChannels(appState: appState)
-        async let e: () = fetchEPG(for: currentDay, appState: appState, updateUI: true)
-        _ = await (c, e)
+        await loadChannels(appState: appState)
+        await fetchEPGSingleChunk(chunkIndex: 0, for: currentDay, appState: appState, baseStart: baseStart, visibleWidth: visibleWidth)
         
-        await scheduleCollapsePrograms(for: currentDay, baseStart: baseStart, visibleWidth: visibleWidth)
         isRefreshing = false
+    }
+
+    /// Triggers loading the next chunk if the user's visible position is close to the end of the current chunk
+    func loadNextChunkIfNeeded(channelIndex: Int, day: Date, appState: AppState, baseStart: Date, visibleWidth: CGFloat) {
+        guard !sortedChannels.isEmpty else { return }
+        let currentChunk = channelIndex / guideChannelChunkSize
+        let nextChunk = currentChunk + 1
+        
+        let chunkEndIndex = (currentChunk + 1) * guideChannelChunkSize
+        // Trigger when the user is within 6 channels of the current chunk's end
+        let isNearEnd = channelIndex >= (chunkEndIndex - 6)
+        guard isNearEnd else { return }
+        
+        let nextChunkStart = nextChunk * guideChannelChunkSize
+        guard nextChunkStart < sortedChannels.count else { return }
+        
+        let dayK = dayKey(from: day)
+        let loadedSet = loadedChunksPerDay[dayK] ?? []
+        let taskKey = "\(dayK)_\(nextChunk)"
+        
+        guard !loadedSet.contains(nextChunk), !inFlightChunkTasks.contains(taskKey) else { return }
+        
+        Task {
+            await fetchEPGSingleChunk(chunkIndex: nextChunk, for: day, appState: appState, baseStart: baseStart, visibleWidth: visibleWidth)
+        }
+    }
+
+    func fetchEPGSingleChunk(chunkIndex: Int, for day: Date, appState: AppState, baseStart: Date, visibleWidth: CGFloat) async {
+        guard let client = appState.client, !appState.accessToken.isEmpty else { return }
+        let total = sortedChannels.count
+        let startIdx = chunkIndex * guideChannelChunkSize
+        guard startIdx < total else { return }
+        let endIdx = min(startIdx + guideChannelChunkSize, total)
+        let batch = Array(sortedChannels[startIdx..<endIdx])
+        guard !batch.isEmpty else { return }
+
+        let dayK = dayKey(from: day)
+        let taskKey = "\(dayK)_\(chunkIndex)"
+        guard !inFlightChunkTasks.contains(taskKey) else { return }
+        inFlightChunkTasks.insert(taskKey)
+        defer { inFlightChunkTasks.remove(taskKey) }
+
+        let start = guideStartOfDay(day)
+        let end = guideEndOfDay(day)
+        let dayEnd = end
+
+        do {
+            let channelIds = batch.map(\.id).joined(separator: ",")
+            let programBase = client.configuration.url.appendingPathComponent("/LiveTv/Programs")
+            var comps = URLComponents(url: programBase, resolvingAgainstBaseURL: false)
+            comps?.queryItems = [
+                URLQueryItem(name: "channelIds", value: channelIds),
+                URLQueryItem(name: "startDate", value: iso8601Basic.string(from: start)),
+                URLQueryItem(name: "endDate", value: iso8601Basic.string(from: end)),
+                URLQueryItem(name: "EnableImages", value: "false"),
+                URLQueryItem(name: "EnableUserData", value: "true"),
+                URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,ParentIndexNumber,IndexNumber,IsRepeat,IsMovie,ImageTags,ChannelId,ProgramId,TimerId,SeriesTimerId,SeriesId,IsSeries")
+            ]
+            if !appState.userID.isEmpty {
+                comps?.queryItems?.append(URLQueryItem(name: "userId", value: appState.userID))
+            }
+            guard let final = comps?.url else { return }
+            
+            var req = URLRequest(url: final)
+            req.httpMethod = "GET"
+            req.cachePolicy = .reloadIgnoringLocalCacheData
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue("MediaBrowser Token=\"\(appState.accessToken)\"", forHTTPHeaderField: "Authorization")
+
+            let dec = JSONDecoder()
+            dec.dateDecodingStrategy = .custom { d in
+                let c = try d.singleValueContainer(); let s = try c.decode(String.self)
+                if let dt = iso8601WithFractional.date(from: s) { return dt }
+                if let dt2 = iso8601Basic.date(from: s) { return dt2 }
+                throw DecodingError.dataCorruptedError(in: c, debugDescription: "Cannot parse date: \(s)")
+            }
+
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return }
+
+            let decoded = try await Task.detached(priority: .userInitiated) {
+                return try dec.decode(EPGProgramsResponse.self, from: data)
+            }.value
+
+            let items = decoded.items ?? []
+            let batchGrouped = await self.backgroundProcessAndGroup(programs: items, for: day)
+            
+            var currentGrouped = self.groupedPrograms[day] ?? [:]
+            for (cid, progs) in batchGrouped {
+                currentGrouped[cid] = progs
+            }
+            self.groupedPrograms[day] = currentGrouped
+
+            let batchBlocks = await Task.detached(priority: .userInitiated) {
+                var blocks: [String: [RenderBlock]] = [:]
+                for ch in batch {
+                    let chItems = currentGrouped[ch.id] ?? []
+                    if chItems.isEmpty { continue }
+                    let collapsed = epgStabilizeItems(chItems, baseStart: baseStart, dayEnd: dayEnd, grouped: currentGrouped)
+                    blocks[ch.id] = epgComputeRenderBlocks(
+                        collapsed, channelId: ch.id, baseStart: baseStart, dayEnd: dayEnd,
+                        visibleWidth: visibleWidth, grouped: currentGrouped)
+                }
+                return blocks
+            }.value
+
+            var currentBlocks = self.renderBlocks[day] ?? [:]
+            for (cid, blks) in batchBlocks {
+                currentBlocks[cid] = blks
+            }
+            self.renderBlocks[day] = currentBlocks
+
+            var loaded = self.loadedChunksPerDay[dayK] ?? []
+            loaded.insert(chunkIndex)
+            self.loadedChunksPerDay[dayK] = loaded
+
+            if !items.isEmpty {
+                await self.saveEPGToCache(for: day, items: items)
+            }
+        } catch {
+            // Fail gracefully
+        }
     }
 
     func scheduleCollapsePrograms(for day: Date, baseStart: Date, visibleWidth: CGFloat) async {
@@ -408,62 +545,6 @@ class GuideViewModel: ObservableObject {
         }
     }
 
-    func fetchEPG(for day: Date, appState: AppState, updateUI: Bool) async {
-        guard let client = appState.client, !appState.accessToken.isEmpty else { return }
-        if updateUI && groupedPrograms[day] == nil { isLoading = true }
-        errorMessage = nil
-        
-        do {
-            let start = guideStartOfDay(day)
-            let end = guideEndOfDay(day)
-            
-            let programBase = client.configuration.url.appendingPathComponent("/LiveTv/Programs")
-            var comps = URLComponents(url: programBase, resolvingAgainstBaseURL: false)
-            comps?.queryItems = [
-                URLQueryItem(name: "startDate", value: iso8601Basic.string(from: start)),
-                URLQueryItem(name: "endDate", value: iso8601Basic.string(from: end)),
-                URLQueryItem(name: "EnableImages", value: "false"),
-                URLQueryItem(name: "EnableUserData", value: "true"),
-                URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,ParentIndexNumber,IndexNumber,IsRepeat,IsMovie,ImageTags,ChannelId,ProgramId,TimerId,SeriesTimerId,SeriesId,IsSeries")
-            ]
-            if !appState.userID.isEmpty { comps?.queryItems?.append(URLQueryItem(name: "userId", value: appState.userID)) }
-            guard let final = comps?.url else { return }
-            
-            var req = URLRequest(url: final)
-            req.httpMethod = "GET"
-            req.cachePolicy = .reloadIgnoringLocalCacheData
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.setValue("MediaBrowser Token=\"\(appState.accessToken)\"", forHTTPHeaderField: "Authorization")
-
-            let dec = JSONDecoder()
-            dec.dateDecodingStrategy = .custom { d in
-                let c = try d.singleValueContainer(); let s = try c.decode(String.self)
-                if let dt = iso8601WithFractional.date(from: s) { return dt }
-                if let dt2 = iso8601Basic.date(from: s) { return dt2 }
-                throw DecodingError.dataCorruptedError(in: c, debugDescription: "Cannot parse date: \(s)")
-            }
-
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
-                throw NSError(domain: "", code: 0, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch EPG"])
-            }
-            
-            let decoded = try await Task.detached(priority: .userInitiated) {
-                return try dec.decode(EPGProgramsResponse.self, from: data)
-            }.value
-
-            let items = decoded.items ?? []
-            let newGrouped = await backgroundProcessAndGroup(programs: items, for: day)
-            
-            self.groupedPrograms[day] = newGrouped
-            try? saveEPGToCache(for: day, items: items)
-            
-        } catch {
-            if updateUI { self.errorMessage = error.localizedDescription }
-        }
-        if updateUI { isLoading = false }
-    }
-
     private func loadChannels(appState: AppState) async {
         guard let client = appState.client, !appState.accessToken.isEmpty else { return }
         do {
@@ -486,7 +567,7 @@ class GuideViewModel: ObservableObject {
             
             self.channels = list
             self.sortedChannels = list
-            try? saveChannelsToCache(list)
+            await saveChannelsToCache(list)
             #if os(iOS)
             guidePrefetchChannelLogos(list, baseURL: appState.serverURL, apiKey: appState.apiKey)
             #endif
@@ -529,12 +610,14 @@ class GuideViewModel: ObservableObject {
     }
 
     private func backgroundProcessAndGroup(programs: [BaseItemDto], for day: Date) async -> [String: [BaseItemDto]] {
-        let start = guideStartOfDay(day); let end = guideEndOfDay(day)
+        let start = guideStartOfDay(day)
+        let end = guideEndOfDay(day)
         return await Task.detached(priority: .userInitiated) {
             let filtered = programs.filter { p in
                 let s0 = p.startDate ?? start
                 let defaultEnd = Calendar.current.date(byAdding: .minute, value: 30, to: s0) ?? s0.addingTimeInterval(30 * 60)
-                let s = max(s0, start); let e = min(p.endDate ?? defaultEnd, end)
+                let s = max(s0, start)
+                let e = min(p.endDate ?? defaultEnd, end)
                 return e > start && s < end
             }
             var grouped = Dictionary(grouping: filtered, by: { $0.channelId ?? "" })
@@ -545,48 +628,53 @@ class GuideViewModel: ObservableObject {
         }.value
     }
 
-    private func prefetchAdjacentDays(around day: Date, appState: AppState) async {
-        let cal = Calendar.current
-        let offsets = [-1, 1, 2]
-        
-        var daysToFetch: [Date] = []
-        for off in offsets {
-            if let d = cal.date(byAdding: .day, value: off, to: day) {
-                let sd = guideStartOfDay(d)
-                if !epgCacheIsFresh(for: d) && !fetchingDays.contains(sd) {
-                    fetchingDays.insert(sd)
-                    daysToFetch.append(d)
-                }
-            }
-        }
-        
-        await withTaskGroup(of: Void.self) { group in
-            for d in daysToFetch {
-                group.addTask {
-                    await self.fetchEPG(for: d, appState: appState, updateUI: false)
-                    await MainActor.run {
-                        self.fetchingDays.remove(guideStartOfDay(d))
+    private func saveChannelsToCache(_ items: [LiveTvChannelDto]) async {
+        await Task.detached(priority: .utility) {
+            do {
+                let payload = ChannelCacheFile(timestamp: Date(), items: items)
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+                let data = try encoder.encode(payload)
+                try data.write(to: try channelsCacheURL(), options: [.atomic])
+            } catch {}
+        }.value
+    }
+
+    private func saveEPGToCache(for day: Date, items: [BaseItemDto]) async {
+        let key = dayKey(from: day)
+        await Task.detached(priority: .utility) {
+            do {
+                var existingItems: [BaseItemDto] = []
+                let url = try epgCacheURL(forDayKey: key)
+                if let existingData = try? Data(contentsOf: url) {
+                    let decoder = JSONDecoder()
+                    decoder.dateDecodingStrategy = .iso8601
+                    if let cached = try? decoder.decode(EPGCacheFile.self, from: existingData) {
+                        existingItems = cached.items
                     }
                 }
-            }
-        }
+                var combined = existingItems
+                let newIds = Set(items.compactMap { $0.id })
+                combined.removeAll { it in
+                    guard let id = it.id else { return false }
+                    return newIds.contains(id)
+                }
+                combined.append(contentsOf: items)
+
+                let payload = EPGCacheFile(dayKey: key, timestamp: Date(), items: combined)
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+                let data = try encoder.encode(payload)
+                try data.write(to: url, options: [.atomic])
+            } catch {}
+        }.value
     }
 
-    nonisolated private func saveChannelsToCache(_ items: [LiveTvChannelDto]) throws {
-        let payload = ChannelCacheFile(timestamp: Date(), items: items)
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(payload)
-        try data.write(to: try channelsCacheURL(), options: [.atomic])
-    }
-
-    nonisolated private func saveEPGToCache(for day: Date, items: [BaseItemDto]) throws {
-        let payload = EPGCacheFile(dayKey: dayKey(from: day), timestamp: Date(), items: items)
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(payload)
-        let url = try epgCacheURL(forDayKey: payload.dayKey)
-        Task.detached(priority: .utility) { try? data.write(to: url, options: [.atomic]) }
+    nonisolated private func channelsCacheIsFresh() -> Bool {
+        guard let url = try? channelsCacheURL(),
+              let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let modified = attrs[.modificationDate] as? Date else { return false }
+        return Date().timeIntervalSince(modified) < channelsCacheTTL
     }
 
     nonisolated private func epgCacheIsFresh(for day: Date) -> Bool {

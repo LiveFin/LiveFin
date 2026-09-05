@@ -13,12 +13,12 @@ import UIKit
 // MARK: - Main tvOS Guide View
 struct TVGuideView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var coordinator: GlobalPlayerCoordinator
     @StateObject private var vm = GuideViewModel.shared
     
     @State private var selectedDay: Date = guideStartOfDay(Date())
     @State private var nowTick: Date = Date()
     @State private var focusedProgramId: String? = nil
-    @State private var streamChannel: LiveTvChannelDto? = nil
     
     // Grid layout constants suitable for tvOS
     private let tvChannelWidth: CGFloat = 220
@@ -93,12 +93,6 @@ struct TVGuideView: View {
                             await vm.scheduleCollapsePrograms(for: self.selectedDay, baseStart: newBaseStart, visibleWidth: newVisibleWidth)
                         }
                     }
-                }
-            }
-            .fullScreenCover(item: $streamChannel) { channel in
-                if let jfChannel = JFChannel(json: ["Id": channel.id, "Name": channel.name ?? ""]) {
-                    TVPlayerView(channel: jfChannel)
-                        .environmentObject(appState)
                 }
             }
         }
@@ -235,7 +229,7 @@ struct TVGuideView: View {
                 .frame(width: tvChannelWidth)
                 .zIndex(1)
                 
-                // Scrollable Timeline & Program Grid (Hardware synced horizontally)
+                // Scrollable Timeline & Program Grid
                 ScrollView(.horizontal, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 0) {
                         
@@ -288,7 +282,9 @@ struct TVGuideView: View {
         let isFocused = focusedProgramId == channel.id
         
         Button(action: {
-            streamChannel = channel
+            if let jfChannel = JFChannel(json: ["Id": channel.id, "Name": channel.name ?? ""]) {
+                coordinator.startChannelPlayback(jfChannel, appState: appState, fullScreen: true)
+            }
         }) {
             HStack(spacing: 12) {
                 VStack(spacing: 4) {
@@ -390,7 +386,8 @@ struct TVGuideView: View {
         let isFocused = focusedProgramId == b.item.id
         let baseColor = colorForProgram(b.item)
         
-        NavigationLink(destination: TVProgramView(program: buildJFProgram(from: b.item, channel: channel), appState: appState)) {
+        NavigationLink(destination: TVProgramView(program: buildJFProgram(from: b.item, channel: channel), appState: appState)
+            .environmentObject(coordinator)) {
             ZStack(alignment: .leading) {
                 Rectangle()
                     .fill(isFocused ? baseColor : baseColor.opacity(0.3))

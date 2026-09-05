@@ -12,15 +12,24 @@ import AVFoundation
 
 struct DragonetPlayerPlayer: UIViewRepresentable {
     let player: AVPlayer
+    var onMenuPress: (() -> Void)? = nil
+    var onPlayPausePress: (() -> Void)? = nil
+    var onSelectPress: (() -> Void)? = nil
 
     func makeUIView(context: Context) -> DragonetPlayerUIView {
         let view = DragonetPlayerUIView()
         view.player = player
+        view.onMenuPress = onMenuPress
+        view.onPlayPausePress = onPlayPausePress
+        view.onSelectPress = onSelectPress
         return view
     }
 
     func updateUIView(_ uiView: DragonetPlayerUIView, context: Context) {
         uiView.player = player
+        uiView.onMenuPress = onMenuPress
+        uiView.onPlayPausePress = onPlayPausePress
+        uiView.onSelectPress = onSelectPress
     }
 }
 
@@ -34,12 +43,47 @@ class DragonetPlayerUIView: UIView {
             playerLayer.videoGravity = .resizeAspect
         }
     }
+    
+    var onMenuPress: (() -> Void)?
+    var onPlayPausePress: (() -> Void)?
+    var onSelectPress: (() -> Void)?
+
     override class var layerClass: AnyClass { AVPlayerLayer.self }
     private var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    
+    override var canBecomeFocused: Bool { true }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        var handled = false
+        for press in presses {
+            if press.type == .menu {
+                if let onMenuPress = onMenuPress {
+                    onMenuPress()
+                    handled = true
+                }
+            } else if press.type == .playPause {
+                if let onPlayPausePress = onPlayPausePress {
+                    onPlayPausePress()
+                    handled = true
+                }
+            } else if press.type == .select {
+                if let onSelectPress = onSelectPress {
+                    onSelectPress()
+                    handled = true
+                }
+            }
+        }
+
+        if !handled {
+            super.pressesBegan(presses, with: event)
+        }
+    }
 }
 
 struct TVDragonetPlayerView: View {
     let initialChannel: JFChannel
+    var customPlayer: AVPlayer? = nil
+    var onMinimize: (() -> Void)? = nil
     
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
@@ -77,9 +121,15 @@ struct TVDragonetPlayerView: View {
     // Playback monitor
     let playbackMonitorTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
     
-    init(channel: JFChannel) {
+    init(channel: JFChannel, customPlayer: AVPlayer? = nil, onMinimize: (() -> Void)? = nil) {
         self.initialChannel = channel
+        self.customPlayer = customPlayer
+        self.onMinimize = onMinimize
         self._currentChannel = State(initialValue: channel)
+        if let customPlayer = customPlayer {
+            self._player = State(initialValue: customPlayer)
+            self._isBuffering = State(initialValue: false)
+        }
     }
     
     // MARK: - Program Time Properties
@@ -114,8 +164,25 @@ struct TVDragonetPlayerView: View {
             Color.black.ignoresSafeArea()
             
             if let player = player {
-                DragonetPlayerPlayer(player: player)
-                    .ignoresSafeArea()
+                DragonetPlayerPlayer(
+                    player: player,
+                    onMenuPress: {
+                        handleBackExit()
+                    },
+                    onPlayPausePress: {
+                        isPlaying.toggle()
+                        isPlaying ? player.play() : player.pause()
+                        withAnimation(.easeOut(duration: 0.3)) { controlsVisible = true }
+                        resetHideTimer()
+                    },
+                    onSelectPress: {
+                        if !controlsVisible {
+                            withAnimation(.easeOut(duration: 0.3)) { controlsVisible = true }
+                            resetHideTimer()
+                        }
+                    }
+                )
+                .ignoresSafeArea()
                 
                 if !controlsVisible && !showSettingsPanel && !showChannelPicker {
                     // Transparent interaction layer preventing white focus highlight
@@ -155,6 +222,15 @@ struct TVDragonetPlayerView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
+        .onExitCommand {
+            handleBackExit()
+        }
+        .onPlayPauseCommand {
+            isPlaying.toggle()
+            isPlaying ? player?.play() : player?.pause()
+            withAnimation(.easeOut(duration: 0.3)) { controlsVisible = true }
+            resetHideTimer()
+        }
         .task { await setupPlayer() }
         .onChange(of: currentChannel.id) { oldId, newId in
             if oldId != newId {
@@ -175,9 +251,11 @@ struct TVDragonetPlayerView: View {
         }
         .onDisappear {
             detachTimeObserver()
-            player?.pause()
-            appState.stopEPGPolling()
-            Task { await appState.reportPlaybackStopped(itemId: currentChannel.id, positionTicks: 0) }
+            if onMinimize == nil {
+                player?.pause()
+                appState.stopEPGPolling()
+                Task { await appState.reportPlaybackStopped(itemId: currentChannel.id, positionTicks: 0) }
+            }
         }
         .onReceive(playbackMonitorTimer) { _ in
             guard let player = player else { return }
@@ -208,7 +286,33 @@ struct TVDragonetPlayerView: View {
         }
     }
     
+    private func handleBackExit() {
+        if showSettingsPanel {
+            withAnimation(.spring()) { showSettingsPanel = false }
+            resetHideTimer()
+            return
+        }
+        if let onMinimize = onMinimize {
+            onMinimize()
+        } else {
+            dismiss()
+        }
+    }
+    
     private func setupPlayer() async {
+        if let existingPlayer = self.player, customPlayer != nil {
+            await MainActor.run {
+                self.streamStartAbsoluteDate = Date()
+                let current = existingPlayer.currentTime().seconds
+                self.currentSeconds = current.isFinite ? current : 0
+                self.scrubPreviewSeconds = nil
+                self.attachTimeObserver()
+                self.loadMediaSelectionOptions(asset: existingPlayer.currentItem?.asset)
+                self.resetHideTimer()
+            }
+            return
+        }
+
         Task { await appState.reportPlaybackStart(itemId: currentChannel.id) }
         appState.startEPGPolling(for: currentChannel.id)
         
@@ -923,7 +1027,6 @@ struct TVStreamPickerView: View {
                     List {
                         if !channels.isEmpty {
                             Section("Live Channels") {
-                                // Filter out channels already streaming in the MultiView to prevent duplicates
                                 let activeChannelIds = Set(vm.streams.compactMap { $0.channel?.id })
                                 ForEach(channels.filter { !activeChannelIds.contains($0.Id) }, id: \.Id) { item in
                                     Button {
@@ -945,7 +1048,6 @@ struct TVStreamPickerView: View {
                         }
                         if !continueWatching.isEmpty {
                             Section("Library Content") {
-                                // Filter out library content already streaming in the MultiView
                                 let activeLibraryIds = Set(vm.streams.compactMap { $0.libraryItem?.Id })
                                 ForEach(continueWatching.filter { !activeLibraryIds.contains($0.Id) }, id: \.Id) { item in
                                     Button {

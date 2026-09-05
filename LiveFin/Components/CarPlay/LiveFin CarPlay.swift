@@ -27,9 +27,9 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
     func templateApplicationScene(_ templateApplicationScene: CPTemplateApplicationScene, didConnect interfaceController: CPInterfaceController) {
         self.interfaceController = interfaceController
         
-        // 1. Configure Audio Session for CarPlay (Crucial for audio/video routing)
+        // 1. Configure Audio Session for CarPlay
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [.allowAirPlay, .allowBluetoothA2DP])
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             print("CarPlay: Failed to set audio session category - \(error)")
@@ -39,25 +39,18 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
         let showOnIphoneButton = CPNowPlayingImageButton(image: UIImage(systemName: "iphone.badge.play") ?? UIImage()) { [weak self] _ in
             guard let self = self else { return }
             
-            // Pause audio in CarPlay before transitioning to phone
             self.player?.pause()
             
-            // Notify the iPhone to open DragonetPlayerView
-            // We pass the channel and program data in the notification
             let userInfo: [String: Any] = [
                 "channel": self.currentPlayingChannel as Any,
                 "program": self.currentPlayingProgram as Any
             ]
             NotificationCenter.default.post(name: NSNotification.Name("LiveFinShowVideoOnIphone"), object: nil, userInfo: userInfo)
             
-            // Pop the Now Playing template to return to the channel list in CarPlay
             self.interfaceController?.popTemplate(animated: true)
         }
         
-        // 3. Inject the custom handoff button into the shared Now Playing template
         CPNowPlayingTemplate.shared.updateNowPlayingButtons([showOnIphoneButton])
-        
-        // Setup Remote Commands so CarPlay/Now Playing can control the app
         setupRemoteCommands()
         
         let liveTvTemplate = createLiveTvTemplate()
@@ -65,8 +58,9 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
         
         interfaceController.setRootTemplate(tabBarTemplate, animated: true)
         
+        appState.restoreLogin()
+        
         Task {
-            await appState.restoreLogin()
             await loadChannels(into: liveTvTemplate)
         }
     }
@@ -82,8 +76,6 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
     
     private func setupRemoteCommands() {
         let commandCenter = MPRemoteCommandCenter.shared()
-        
-        // Clear previous targets to avoid duplicate triggers
         commandCenter.playCommand.removeTarget(nil)
         commandCenter.pauseCommand.removeTarget(nil)
         
@@ -105,8 +97,8 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
         let listTemplate = CPListTemplate(title: "Live TV", sections: [section])
         listTemplate.tabSystemItem = .mostRecent
         
-        // Navigation bar button to manually open the system Now Playing template
-        let nowPlayingButton = CPBarButton(image: UIImage(systemName: "play.tv.fill")!) { [weak self] _ in
+        let barImage = UIImage(systemName: "play.tv.fill") ?? UIImage(systemName: "play.fill") ?? UIImage()
+        let nowPlayingButton = CPBarButton(image: barImage) { [weak self] _ in
             guard let interfaceController = self?.interfaceController else { return }
             interfaceController.pushTemplate(CPNowPlayingTemplate.shared, animated: true) { _, error in
                 if let error = error {
@@ -119,7 +111,6 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
         return listTemplate
     }
     
-    // Creates a custom decoder to handle Jellyfin's specific ISO8601 date strings
     private func createJellyfinDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { d in
@@ -134,6 +125,28 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
             throw DecodingError.dataCorruptedError(in: c, debugDescription: "Cannot parse date: \(s)")
         }
         return decoder
+    }
+    
+    // Centers and fits the logo within a square CarPlay canvas while preserving its original aspect ratio
+    private func formatCarPlayIcon(_ image: UIImage) -> UIImage {
+        let canvasSize = CGSize(width: 44, height: 44)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = UIScreen.main.scale
+        
+        let renderer = UIGraphicsImageRenderer(size: canvasSize, format: format)
+        return renderer.image { _ in
+            let aspectWidth = canvasSize.width / image.size.width
+            let aspectHeight = canvasSize.height / image.size.height
+            let scale = min(aspectWidth, aspectHeight)
+            
+            let scaledWidth = image.size.width * scale
+            let scaledHeight = image.size.height * scale
+            
+            let originX = (canvasSize.width - scaledWidth) / 2.0
+            let originY = (canvasSize.height - scaledHeight) / 2.0
+            
+            image.draw(in: CGRect(x: originX, y: originY, width: scaledWidth, height: scaledHeight))
+        }
     }
     
     private func loadChannels(into template: CPListTemplate) async {
@@ -154,7 +167,7 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
         channelsReq.setValue(appState.getAuthorizationHeader(includeToken: true), forHTTPHeaderField: "Authorization")
         
         let now = Date()
-        let end = now.addingTimeInterval(3600 * 2) // Look ahead 2 hours
+        let end = now.addingTimeInterval(3600 * 2)
         let iso = ISO8601DateFormatter()
         iso.timeZone = TimeZone(secondsFromGMT: 0)
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -168,12 +181,18 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
             async let channelsTask = URLSession.shared.data(for: channelsReq)
             async let programsTask = URLSession.shared.data(for: programsReq)
             
-            let (channelsData, _) = try await channelsTask
+            let (channelsData, channelsResponseRaw) = try await channelsTask
             let (programsData, _) = try await programsTask
+            
+            if let httpChannels = channelsResponseRaw as? HTTPURLResponse, httpChannels.statusCode != 200 {
+                let errorItem = CPListItem(text: "Server Error (\(httpChannels.statusCode))", detailText: "Could not fetch channel listing.")
+                template.updateSections([CPListSection(items: [errorItem])])
+                return
+            }
             
             let decoder = createJellyfinDecoder()
             let channelsResponse = try decoder.decode(ChannelsResponse.self, from: channelsData)
-            let programsResponse = try decoder.decode(ProgramsResponse.self, from: programsData)
+            let programsResponse = (try? decoder.decode(ProgramsResponse.self, from: programsData)) ?? ProgramsResponse(items: [])
             
             guard let channels = channelsResponse.items, !channels.isEmpty else {
                 let emptyItem = CPListItem(text: "No Channels Found", detailText: "Check your server tuners.")
@@ -181,7 +200,6 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
                 return
             }
             
-            // Map currently airing programs
             var currentProgramsMap: [String: BaseItemDto] = [:]
             if let programs = programsResponse.items {
                 for prog in programs {
@@ -201,38 +219,52 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
                 return num1 < num2
             }
             
-            let listItems = sortedChannels.map { channel -> CPListItem in
-                let channelText = [channel.number, channel.name].compactMap { $0 }.joined(separator: " - ")
-                let activeProgram = currentProgramsMap[channel.id]
-                
-                // Format subtitle / episode info
-                var detailText = activeProgram?.name ?? "No Program Info"
-                if let subtitle = activeProgram?.episodeTitle ?? activeProgram?.seriesName, subtitle != activeProgram?.name {
-                    detailText += " • \(subtitle)"
-                }
-                
-                let item = CPListItem(text: channelText, detailText: detailText)
-                item.setImage(UIImage(systemName: "tv")) // Base fallback
-                
-                // Asynchronously load the channel or program image
-                Task {
-                    let imageId = activeProgram?.id ?? channel.id
-                    let urlString = "\(cleanBaseURL)/Items/\(imageId)/Images/Primary?maxWidth=200&api_key=\(accessToken)"
-                    if let url = URL(string: urlString),
-                       let (data, _) = try? await URLSession.shared.data(for: URLRequest(url: url)),
-                       let image = UIImage(data: data) {
-                        await MainActor.run { item.setImage(image) }
-                    }
-                }
-                
-                item.handler = { [weak self] item, completion in
-                    self?.handleChannelSelection(channel: channel, program: activeProgram, completion: completion)
-                }
-                return item
+            // FIX #1: Break into multi-sections (chunks of 12) so CarPlay doesn't truncate at 13
+            let chunkSize = 12
+            let channelChunks = stride(from: 0, to: sortedChannels.count, by: chunkSize).map {
+                Array(sortedChannels[$0..<min($0 + chunkSize, sortedChannels.count)])
             }
             
-            let section = CPListSection(items: listItems, header: "All Channels", sectionIndexTitle: nil)
-            template.updateSections([section])
+            var builtSections: [CPListSection] = []
+            
+            for (index, chunk) in channelChunks.enumerated() {
+                let listItems = chunk.map { channel -> CPListItem in
+                    let channelText = [channel.number, channel.name].compactMap { $0 }.joined(separator: " - ")
+                    let activeProgram = currentProgramsMap[channel.id]
+                    
+                    var detailText = activeProgram?.name ?? "No Program Info"
+                    if let subtitle = activeProgram?.episodeTitle ?? activeProgram?.seriesName, subtitle != activeProgram?.name {
+                        detailText += " • \(subtitle)"
+                    }
+                    
+                    let item = CPListItem(text: channelText, detailText: detailText)
+                    item.setImage(UIImage(systemName: "tv"))
+                    
+                    // FIX #3: Strictly use the Channel Logo (channel.id), matching ChannelImageView
+                    Task {
+                        let urlString = "\(cleanBaseURL)/Items/\(channel.id)/Images/Primary?maxWidth=200&api_key=\(accessToken)"
+                        if let url = URL(string: urlString),
+                           let (data, _) = try? await URLSession.shared.data(for: URLRequest(url: url)),
+                           let rawImage = UIImage(data: data) {
+                            let formatted = self.formatCarPlayIcon(rawImage)
+                            await MainActor.run { item.setImage(formatted) }
+                        }
+                    }
+                    
+                    item.handler = { [weak self] item, completion in
+                        self?.handleChannelSelection(channel: channel, program: activeProgram, completion: completion)
+                    }
+                    return item
+                }
+                
+                let startNum = chunk.first?.number ?? "\(index * chunkSize + 1)"
+                let endNum = chunk.last?.number ?? "\(index * chunkSize + chunk.count)"
+                let sectionTitle = "Channels \(startNum) - \(endNum)"
+                
+                builtSections.append(CPListSection(items: listItems, header: sectionTitle, sectionIndexTitle: "\(index + 1)"))
+            }
+            
+            template.updateSections(builtSections)
             
         } catch {
             print("CarPlay: Failed to fetch channels/programs - \(error)")
@@ -246,6 +278,7 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
         self.interfaceController?.presentTemplate(tuningAlert, animated: true)
         
         Task {
+            // FIX #2: Resolve stream URL and optimize AVPlayer item for head unit audio streaming
             let resolvedStream = await JFOpenLiveStreamService.resolveStreamURLWithSession(
                 channelId: channel.id,
                 userId: appState.userID,
@@ -272,26 +305,30 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
             }
             
             await MainActor.run {
-                // 1. Initialize AVPlayer
-                let playerItem = AVPlayerItem(url: finalUrl)
+                let asset = AVURLAsset(url: finalUrl)
+                let playerItem = AVPlayerItem(asset: asset)
+                
+                // Audio/CarPlay stream reliability flags
+                playerItem.preferredForwardBufferDuration = 5.0
+                playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused = true
+                
+                self.player?.pause()
                 self.player = AVPlayer(playerItem: playerItem)
+                self.player?.automaticallyWaitsToMinimizeStalling = true
                 self.player?.play()
                 
                 self.currentPlayingChannel = channel
                 self.currentPlayingProgram = program
                 
-                // 2. Automatically push the Now Playing template upon successful selection
                 self.interfaceController?.pushTemplate(CPNowPlayingTemplate.shared, animated: true) { _, error in
                     if let error = error {
                         print("CarPlay: Failed to auto-push Now Playing - \(error)")
                     }
                 }
                 
-                // 3. Start metadata refresh timer
                 self.startMetadataTimer()
             }
             
-            // 4. Update metadata and fetch high-res artwork asynchronously
             Task {
                 await self.updateNowPlayingInfo(channel: channel, program: program)
             }
@@ -306,7 +343,6 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
         metadataTask?.cancel()
         metadataTask = Task { [weak self] in
             while !Task.isCancelled {
-                // Check every 60 seconds
                 try? await Task.sleep(nanoseconds: 60_000_000_000)
                 if Task.isCancelled { break }
                 await self?.refreshMetadata()
@@ -321,12 +357,12 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
         let cleanBaseURL = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
         
         let now = Date()
-        let end = now.addingTimeInterval(3600) // Look ahead 1 hour
+        let end = now.addingTimeInterval(3600)
         let iso = ISO8601DateFormatter()
         iso.timeZone = TimeZone(secondsFromGMT: 0)
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         
-        let channelId = channel.id ?? ""
+        let channelId = channel.id
         guard let programsUrl = URL(string: "\(cleanBaseURL)/LiveTv/Programs?userId=\(userId)&channelIds=\(channelId)&startDate=\(iso.string(from: now))&endDate=\(iso.string(from: end))&EnableTotalRecordCount=false") else { return }
         
         var programsReq = URLRequest(url: programsUrl)
@@ -349,7 +385,6 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
                 }
             }
             
-            // If the program changed, update
             if activeProgram?.id != self.currentPlayingProgram?.id {
                 self.currentPlayingProgram = activeProgram
                 await self.updateNowPlayingInfo(channel: channel, program: activeProgram)
@@ -365,7 +400,6 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
         nowPlayingInfo[MPMediaItemPropertyTitle] = program?.name ?? channel.name
         nowPlayingInfo[MPMediaItemPropertyArtist] = channel.name
         
-        // Map the subtitle or episode name to AlbumTitle
         if let subtitle = program?.episodeTitle ?? program?.seriesName, subtitle != program?.name {
             nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = subtitle
         } else if let overview = program?.overview {
@@ -376,11 +410,10 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
         
         nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
         
-        // Push text updates immediately so UI feels responsive
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
         
-        // Fetch new artwork
-        let imageId = program?.id ?? channel.id
+        // Artwork for Now Playing screen: use channel logo or active program banner
+        let imageId = channel.id
         let cleanBaseURL = self.appState.serverURL.hasSuffix("/") ? String(self.appState.serverURL.dropLast()) : self.appState.serverURL
         
         let urlString = "\(cleanBaseURL)/Items/\(imageId)/Images/Primary?maxWidth=600&api_key=\(self.appState.accessToken)"
@@ -389,7 +422,6 @@ class LiveFinCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelega
            let (data, _) = try? await URLSession.shared.data(for: URLRequest(url: url)),
            let image = UIImage(data: data) {
             await MainActor.run {
-                // Re-fetch current info in case it changed while downloading
                 var updatedInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [String: Any]()
                 let artwork = MPMediaItemArtwork(boundsSize: image.size, requestHandler: { _ in return image })
                 updatedInfo[MPMediaItemPropertyArtwork] = artwork

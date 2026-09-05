@@ -2,7 +2,7 @@
 //  TVProgramView.swift
 //  LiveFin
 //
-//  Created by Kervens on 7/18/26.
+//  Created by KPGamingz on 7/18/26.
 //
 
 import SwiftUI
@@ -11,8 +11,11 @@ import Combine
 struct TVProgramView: View {
     let program: JFProgram
     @ObservedObject var appState: AppState
+    @EnvironmentObject var coordinator: GlobalPlayerCoordinator
     @StateObject private var vm: ProgramViewModel
     @Environment(\.dismiss) private var dismiss
+
+    @State private var vodItemToPlay: JFItemDto? = nil
 
     init(program: JFProgram, appState: AppState) {
         self.program = program
@@ -53,45 +56,21 @@ struct TVProgramView: View {
         }
         .environmentObject(appState)
         .task {
-                    vm.onAppear()
-                    await vm.load()
-                }
-                .fullScreenCover(item: $vm.streamItem) { _ in
-                    if vm.isLive, let channelId = program.channelId,
-                       let channel = JFChannel(json: ["Id": channelId, "Name": program.channelName ?? program.name]) {
-                        TVPlayerView(channel: channel)
-                            .environmentObject(appState)
-                    } else {
-                        // Safely mock a JFItemDto from the program to route VOD playback to the Library Player
-                        let dict: [String: Any] = ["Id": program.id, "Name": program.name]
-                        if let data = try? JSONSerialization.data(withJSONObject: dict),
-                           let dto = try? JSONDecoder().decode(JFItemDto.self, from: data) {
-                            TVPlayerView(item: dto)
-                                .environmentObject(appState)
-                        } else {
-                            ZStack {
-                                Color.black.ignoresSafeArea()
-                                Text("Unable to load media.").foregroundColor(.gray)
-                            }
-                        }
-                    }
-                }
-                .alert("Playback Error", isPresented: Binding(
-                    get: { vm.playbackErrorMessage != nil },
+            vm.onAppear()
+            await vm.load()
+        }
+        .fullScreenCover(item: $vodItemToPlay) { item in
+            TVPlanktonPlayerView(playlist: [item], startIndex: 0)
+                .environmentObject(appState)
+        }
+        .alert("Playback Error", isPresented: Binding(
+            get: { vm.playbackErrorMessage != nil },
             set: { if !$0 { vm.playbackErrorMessage = nil } }
         )) {
             Button("OK", role: .cancel) { vm.playbackErrorMessage = nil }
         } message: {
             Text(vm.playbackErrorMessage ?? "")
         }
-        // On tvOS, the Menu button's "pop back" behavior needs at least one
-        // focusable element on screen to attach a focus context to. A screen
-        // built entirely from Text (as this one originally was) never gives
-        // the focus engine anything to land on, so Menu falls through to the
-        // system default and backgrounds/quits the app instead of popping
-        // back to Home. The Play button below fixes that in the common case;
-        // this is a guaranteed fallback for the moment right after a push,
-        // before focus has settled anywhere.
         .onExitCommand { dismiss() }
     }
 
@@ -140,7 +119,7 @@ struct TVProgramView: View {
                 }
 
                 Button {
-                    Task { await vm.startPlayback() }
+                    handlePlayAction()
                 } label: {
                     Label("Play", systemImage: "play.fill")
                         .font(.title3.weight(.semibold))
@@ -151,11 +130,6 @@ struct TVProgramView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            // A poster-shaped card rather than trying to force this into a
-            // 16:9 backdrop — a lot of program art (novelas, movies, specials)
-            // is portrait-only, and stretching that across a full-bleed
-            // widescreen hero is what pushed the art off-center and let text
-            // run underneath it in the last version.
             ProgramDetailImage(program: program, refreshSeed: 0, preferredWidth: 700)
                 .frame(width: 320, height: 480)
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -165,6 +139,21 @@ struct TVProgramView: View {
         .padding(.top, 60)
     }
 
+    private func handlePlayAction() {
+        if vm.isLive, let channelId = program.channelId,
+           let channel = JFChannel(json: ["Id": channelId, "Name": program.channelName ?? program.name]) {
+            coordinator.startChannelPlayback(channel, appState: appState, fullScreen: true)
+        } else {
+            // Close the live PiP before starting on-demand playback
+            coordinator.closePlayback(appState: appState)
+            let dict: [String: Any] = ["Id": program.id, "Name": program.name]
+            if let data = try? JSONSerialization.data(withJSONObject: dict),
+               let dto = try? JSONDecoder().decode(JFItemDto.self, from: data) {
+                self.vodItemToPlay = dto
+            }
+        }
+    }
+
     // MARK: - Upcoming
 
     private var upcomingSection: some View {
@@ -172,7 +161,8 @@ struct TVProgramView: View {
             sectionHeader("Upcoming Airings")
             LazyVStack(spacing: 0) {
                 ForEach(vm.displayedUpcoming) { upcoming in
-                    NavigationLink(destination: TVProgramView(program: upcoming, appState: appState)) {
+                    NavigationLink(destination: TVProgramView(program: upcoming, appState: appState)
+                        .environmentObject(coordinator)) {
                         UpcomingProgramRow(
                             program: upcoming,
                             referenceName: vm.program.name,
@@ -203,7 +193,8 @@ struct TVProgramView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 28) {
                     ForEach(vm.relatedPrograms) { related in
-                        NavigationLink(destination: TVProgramView(program: related, appState: appState)) {
+                        NavigationLink(destination: TVProgramView(program: related, appState: appState)
+                            .environmentObject(coordinator)) {
                             RelatedProgramCard(program: related, loadImages: vm.loadRelatedImages)
                         }
                         .buttonStyle(.card)

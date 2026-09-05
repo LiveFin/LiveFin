@@ -2,7 +2,7 @@
 //  TVHomeView.swift
 //  LiveFin
 //
-//  Created by Kervens on 7/18/26.
+//  Created by KPGamingz on 7/18/26.
 //
 
 import SwiftUI
@@ -11,6 +11,7 @@ import Combine
 struct TVHomeView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var vm: HomeViewModel
+    @EnvironmentObject var coordinator: GlobalPlayerCoordinator
 
     let nowTimer = Timer.publish(every: 600, on: .main, in: .common).autoconnect()
     @State private var hasAppeared = false
@@ -53,60 +54,70 @@ struct TVHomeView: View {
                                 SectionHeader("On Now")
                                 HorizontalProgramsRow(programs: vm.onNow, style: .landscapeLarge)
                                     .environmentObject(vm)
+                                    .environmentObject(coordinator)
                             }
 
                             if !vm.channels.isEmpty {
                                 SectionHeader("Channels")
                                 HorizontalChannelsRow(channels: vm.channels)
                                     .environmentObject(appState)
+                                    .environmentObject(coordinator)
                             }
 
                             if !vm.continueWatching.isEmpty {
                                 SectionHeader("Continue Watching")
                                 TVHorizontalItemsRow(items: vm.continueWatching, isLandscape: true, playDirectly: true)
                                     .environmentObject(appState)
+                                    .environmentObject(coordinator)
                             }
 
                             if !vm.upNext.isEmpty {
                                 SectionHeader("Up Next")
                                 TVHorizontalItemsRow(items: vm.upNext, isLandscape: true, playDirectly: true)
                                     .environmentObject(appState)
+                                    .environmentObject(coordinator)
                             }
 
                             if !vm.shows.isEmpty {
                                 SectionHeader("Shows")
                                 HorizontalProgramsRow(programs: vm.shows, style: .landscape)
                                     .environmentObject(vm)
+                                    .environmentObject(coordinator)
                             }
 
                             if !vm.movies.isEmpty {
                                 SectionHeader("Movies")
                                 HorizontalProgramsRow(programs: vm.movies, style: .portrait)
                                     .environmentObject(vm)
+                                    .environmentObject(coordinator)
                             }
 
                             if !vm.news.isEmpty {
                                 SectionHeader("News")
                                 HorizontalProgramsRow(programs: vm.news, style: .landscape)
                                     .environmentObject(vm)
+                                    .environmentObject(coordinator)
                             }
 
                             if !vm.sports.isEmpty {
                                 SectionHeader("Sports")
                                 HorizontalProgramsRow(programs: vm.sports, style: .landscape)
                                     .environmentObject(vm)
+                                    .environmentObject(coordinator)
                             }
 
                             if !vm.kids.isEmpty {
                                 SectionHeader("Kids")
                                 HorizontalProgramsRow(programs: vm.kids, style: .landscape)
                                     .environmentObject(vm)
+                                    .environmentObject(coordinator)
                             }
 
                             if !vm.recentlyAdded.isEmpty {
                                 SectionHeader("Recently Added")
                                 TVHorizontalItemsRow(items: vm.recentlyAdded, isLandscape: false, playDirectly: false)
                                     .environmentObject(appState)
+                                    .environmentObject(coordinator)
                             }
                         }
                         .padding(.bottom, 40)

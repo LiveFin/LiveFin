@@ -282,7 +282,7 @@ struct LoginView: View {
             }
             
             Section {
-                Button("Back to Splash") {
+                Button("Back") {
                     withAnimation {
                         step = .splash
                         error = nil

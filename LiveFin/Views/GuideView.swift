@@ -12,34 +12,26 @@ import JellyfinAPI
 import UIKit
 #endif
 
-// MARK: - Preference Key for Synchronized Horizontal Scrolling
-struct ScrollOffsetPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
-// MARK: - Main Guide View (iOS)
 struct GuideView: View {
     @EnvironmentObject var appState: AppState
     @StateObject private var vm = GuideViewModel.shared
 
     @State private var selectedDay: Date = guideStartOfDay(Date())
-    @State private var horizontalScrollOffset: CGFloat = 0
+    @State private var currentTime: Date = Date()
+
+    private let timelineTimer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     private var availableDaysSorted: [Date] {
         let cal = Calendar.current
-        let today = guideStartOfDay(Date())
+        let today = guideStartOfDay(currentTime)
         return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: today) }
     }
 
-    private func computeBaseStart(for day: Date) -> Date {
+    private func computeBaseStart(for day: Date, relativeTo referenceDate: Date) -> Date {
         let startD = guideStartOfDay(day)
-        guard Calendar.current.isDateInToday(day) else { return startD }
-        let now = Date()
+        guard Calendar.current.isDate(day, inSameDayAs: referenceDate) else { return startD }
         let cal = Calendar.current
-        let comps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: now)
+        let comps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: referenceDate)
         
         var newComps = DateComponents()
         newComps.year = comps.year
@@ -50,13 +42,14 @@ struct GuideView: View {
         newComps.second = 0
         newComps.nanosecond = 0
         
-        let aligned = cal.date(from: newComps) ?? now
+        let aligned = cal.date(from: newComps) ?? referenceDate
         return max(startD, aligned)
     }
 
-    private var baseStart: Date { computeBaseStart(for: selectedDay) }
+    private var baseStart: Date { computeBaseStart(for: selectedDay, relativeTo: currentTime) }
     private var visibleMinutes: Double { guideEndOfDay(selectedDay).timeIntervalSince(baseStart) / 60.0 }
     private var visibleWidth: CGFloat { CGFloat(visibleMinutes) * guidePxPerMinute }
+    private var totalGridHeight: CGFloat { CGFloat(vm.sortedChannels.count) * guideRowHeight }
 
     var body: some View {
         NavigationStack {
@@ -76,6 +69,16 @@ struct GuideView: View {
             .task(id: appState.accessToken) {
                 guard !appState.accessToken.isEmpty else { return }
                 await vm.start(appState: appState, baseStart: baseStart, visibleWidth: visibleWidth)
+            }
+            .onReceive(timelineTimer) { newTime in
+                let previousBase = baseStart
+                currentTime = newTime
+                let newBase = computeBaseStart(for: selectedDay, relativeTo: newTime)
+                if previousBase != newBase {
+                    Task {
+                        await vm.scheduleCollapsePrograms(for: selectedDay, baseStart: newBase, visibleWidth: visibleWidth)
+                    }
+                }
             }
         }
     }
@@ -130,9 +133,71 @@ struct GuideView: View {
         VStack(spacing: 0) {
             daySelectorHeader
             Divider()
-            stickyTimelineHeader // Pinned permanently outside the vertical scrollview
-            Divider()
-            gridScrollView
+
+            // 4-quadrant layout: Channel column stays locked on the left horizontally
+            GuideSyncGridView(
+                channelWidth: guideChannelLabelWidth,
+                headerHeight: guideHeaderHeight,
+                gridWidth: visibleWidth,
+                totalHeight: totalGridHeight,
+                timelineContent: {
+                    hourTicksView
+                        .frame(maxHeight: .infinity, alignment: .topLeading)
+                },
+                channelContent: {
+                    VStack(spacing: 0) {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(vm.sortedChannels.enumerated()), id: \.element.id) { index, ch in
+                                NavigationLink(
+                                    destination: ChannelDetailView(channel: ch)
+                                        .environmentObject(appState)
+                                ) {
+                                    GuideChannelHeader(channel: ch)
+                                        .environmentObject(appState)
+                                        .frame(width: guideChannelLabelWidth, height: guideRowHeight, alignment: .leading)
+                                }
+                                .buttonStyle(.plain)
+                                .background(Color(.systemBackground))
+                                .overlay(Rectangle().fill(Color.secondary.opacity(0.12)).frame(height: 1), alignment: .bottom)
+                                .onAppear {
+                                    vm.loadNextChunkIfNeeded(
+                                        channelIndex: index,
+                                        day: selectedDay,
+                                        appState: appState,
+                                        baseStart: baseStart,
+                                        visibleWidth: visibleWidth
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .frame(width: guideChannelLabelWidth, alignment: .top)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .background(Color(.systemBackground))
+                },
+                gridContent: {
+                    VStack(spacing: 0) {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(vm.sortedChannels.enumerated()), id: \.element.id) { index, ch in
+                                channelProgramsRow(for: ch)
+                                    .onAppear {
+                                        vm.loadNextChunkIfNeeded(
+                                            channelIndex: index,
+                                            day: selectedDay,
+                                            appState: appState,
+                                            baseStart: baseStart,
+                                            visibleWidth: visibleWidth
+                                        )
+                                    }
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .frame(width: visibleWidth, alignment: .topLeading)
+                    .frame(maxHeight: .infinity, alignment: .topLeading)
+                }
+            )
         }
     }
 
@@ -160,7 +225,7 @@ struct GuideView: View {
                         proxy.scrollTo(guideStartOfDay(newDay), anchor: .center)
                     }
                     Task {
-                        let newBaseStart = computeBaseStart(for: newDay)
+                        let newBaseStart = computeBaseStart(for: newDay, relativeTo: currentTime)
                         let vWidth = CGFloat(guideEndOfDay(newDay).timeIntervalSince(newBaseStart) / 60.0) * guidePxPerMinute
                         await vm.switchDay(newDay, appState: appState, visibleWidth: vWidth, baseStart: newBaseStart)
                     }
@@ -169,7 +234,7 @@ struct GuideView: View {
             
             Button {
                 Task {
-                    let bStart = computeBaseStart(for: selectedDay)
+                    let bStart = computeBaseStart(for: selectedDay, relativeTo: currentTime)
                     let vWidth = CGFloat(guideEndOfDay(selectedDay).timeIntervalSince(bStart) / 60.0) * guidePxPerMinute
                     await vm.manualRefresh(appState: appState, currentDay: selectedDay, baseStart: bStart, visibleWidth: vWidth)
                 }
@@ -231,103 +296,27 @@ struct GuideView: View {
         }
     }
 
-    // Pinned sticky timeline header
-    private var stickyTimelineHeader: some View {
-        HStack(spacing: 0) {
-            timeCornerView
+    private func channelProgramsRow(for ch: LiveTvChannelDto) -> some View {
+        let blocks = vm.renderBlocks[selectedDay]?[ch.id] ?? []
+        
+        return ZStack(alignment: .topLeading) {
+            RowGridBackground(visibleWidth: visibleWidth)
             
-            GeometryReader { _ in
-                hourTicksView
-                    .offset(x: horizontalScrollOffset)
+            ForEach(blocks) { b in
+                ProgramBlockView(b: b, channel: ch, appState: appState)
             }
-            .frame(height: guideHeaderHeight)
-            .clipped()
+            
+            NowLineOverlay(baseStart: baseStart, selectedDay: selectedDay, rowHeight: guideRowHeight, currentTime: currentTime)
         }
-        .background(Color(.systemBackground))
-        .zIndex(10)
-    }
-
-    private var timeCornerView: some View {
-        VStack(spacing: 0) {
-            Text("Channel")
-                .font(.caption2.bold())
-                .foregroundColor(.secondary)
-        }
-        .frame(width: guideChannelLabelWidth, height: guideHeaderHeight)
-        .background(Color(.systemBackground))
-        .overlay(
-            Rectangle().fill(Color.secondary.opacity(0.1)).frame(height: 1), alignment: .bottom
-        )
-    }
-
-    private var gridScrollView: some View {
-        ScrollView(.vertical, showsIndicators: true) {
-            HStack(alignment: .top, spacing: 0) {
-                channelHeadersColumn
-                programBlocksScrollView
-            }
-        }
-    }
-
-    private var channelHeadersColumn: some View {
-        LazyVStack(spacing: 0) {
-            ForEach(vm.sortedChannels, id: \.id) { ch in
-                NavigationLink(
-                    destination: ChannelDetailView(channel: ch)
-                        .environmentObject(appState)
-                ) {
-                    GuideChannelHeader(channel: ch)
-                        .environmentObject(appState)
-                        .frame(width: guideChannelLabelWidth, height: guideRowHeight, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-                .background(Color(.systemBackground))
-                .overlay(Rectangle().fill(Color.secondary.opacity(0.1)).frame(height: 1), alignment: .bottom)
-            }
-        }
-        .frame(width: guideChannelLabelWidth)
-    }
-
-    private var programBlocksScrollView: some View {
-        ScrollView(.horizontal, showsIndicators: true) {
-            LazyVStack(spacing: 0) {
-                ForEach(vm.sortedChannels, id: \.id) { ch in
-                    let blocks = vm.renderBlocks[selectedDay]?[ch.id] ?? []
-                    
-                    ZStack(alignment: .topLeading) {
-                        Color.clear.frame(width: visibleWidth, height: guideRowHeight)
-                        
-                        hourGridRow
-                        
-                        ForEach(blocks) { b in
-                            ProgramBlockView(b: b, channel: ch, appState: appState)
-                        }
-                        
-                        NowLineOverlay(baseStart: baseStart, selectedDay: selectedDay, rowHeight: guideRowHeight)
-                    }
-                    .frame(width: visibleWidth, height: guideRowHeight)
-                    .background(Color(.secondarySystemBackground))
-                    .clipped()
-                }
-            }
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(
-                        key: ScrollOffsetPreferenceKey.self,
-                        value: geo.frame(in: .named("guideScrollSpace")).minX
-                    )
-                }
-            )
-        }
-        .coordinateSpace(name: "guideScrollSpace")
-        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { val in
-            self.horizontalScrollOffset = val
-        }
+        .frame(width: visibleWidth, height: guideRowHeight)
+        .overlay(Rectangle().fill(Color.secondary.opacity(0.1)).frame(height: 1), alignment: .bottom)
+        .clipped()
     }
 
     private var hourTicksView: some View {
         let end = guideEndOfDay(selectedDay)
         let boundaries = calculatedHourBoundaries(from: baseStart, to: end)
+        
         return ZStack(alignment: .topLeading) {
             Color.clear.frame(width: visibleWidth, height: guideHeaderHeight)
             
@@ -345,30 +334,10 @@ struct GuideView: View {
                     .foregroundColor(.secondary)
                     .offset(x: x + 6, y: 6)
             }
-            NowLineOverlay(baseStart: baseStart, selectedDay: selectedDay, rowHeight: guideHeaderHeight)
+            
+            NowLineOverlay(baseStart: baseStart, selectedDay: selectedDay, rowHeight: guideHeaderHeight, currentTime: currentTime)
         }
         .frame(width: visibleWidth, height: guideHeaderHeight, alignment: .topLeading)
-    }
-
-    private var hourGridRow: some View {
-        let end = guideEndOfDay(selectedDay)
-        let boundaries = calculatedHourBoundaries(from: baseStart, to: end)
-        return ZStack(alignment: .topLeading) {
-            ForEach(boundaries, id: \.self) { ts in
-                let mins = ts.timeIntervalSince(baseStart) / 60.0
-                let x = CGFloat(mins) * guidePxPerMinute
-                let w = 30 * guidePxPerMinute
-                
-                Rectangle()
-                    .fill(Color.secondary.opacity(0.08))
-                    .frame(width: w, height: guideRowHeight)
-                    .overlay(
-                        Rectangle().fill(Color.secondary.opacity(0.2)).frame(width: 1),
-                        alignment: .leading
-                    )
-                    .offset(x: x)
-            }
-        }
     }
 
     private func calculatedHourBoundaries(from: Date, to: Date) -> [Date] {
@@ -383,118 +352,288 @@ struct GuideView: View {
     }
 }
 
-// MARK: - Isolated Decoupled Now-Line Component
-struct NowLineOverlay: View {
-    let baseStart: Date
-    let selectedDay: Date
-    let rowHeight: CGFloat
+struct GuideSyncGridView<TimelineContent: View, ChannelContent: View, GridContent: View>: UIViewRepresentable {
+    let channelWidth: CGFloat
+    let headerHeight: CGFloat
+    let gridWidth: CGFloat
+    let totalHeight: CGFloat
+    @ViewBuilder let timelineContent: () -> TimelineContent
+    @ViewBuilder let channelContent: () -> ChannelContent
+    @ViewBuilder let gridContent: () -> GridContent
 
-    @State private var nowX: CGFloat? = nil
-
-    var body: some View {
-        Group {
-            if let x = nowX {
-                Rectangle()
-                    .fill(Color.red)
-                    .frame(width: 2, height: rowHeight)
-                    .offset(x: x)
-                    .allowsHitTesting(false)
-            }
-        }
-        .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
-            updateX()
-        }
-        .onAppear { updateX() }
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
     }
 
-    private func updateX() {
-        guard Calendar.current.isDateInToday(selectedDay) else {
-            nowX = nil
-            return
+    func makeUIView(context: Context) -> GuideGridContainerView {
+        let view = GuideGridContainerView(
+            channelWidth: channelWidth,
+            headerHeight: headerHeight,
+            gridWidth: gridWidth,
+            totalHeight: totalHeight,
+            timelineContent: timelineContent(),
+            channelContent: channelContent(),
+            gridContent: gridContent(),
+            coordinator: context.coordinator
+        )
+        return view
+    }
+
+    func updateUIView(_ uiView: GuideGridContainerView, context: Context) {
+        uiView.update(
+            channelWidth: channelWidth,
+            headerHeight: headerHeight,
+            gridWidth: gridWidth,
+            totalHeight: totalHeight,
+            timelineContent: timelineContent(),
+            channelContent: channelContent(),
+            gridContent: gridContent()
+        )
+    }
+
+    class Coordinator: NSObject, UIScrollViewDelegate {
+        weak var timelineScrollView: UIScrollView?
+        weak var channelScrollView: UIScrollView?
+        weak var gridScrollView: UIScrollView?
+
+        private var isSyncing = false
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard !isSyncing else { return }
+            isSyncing = true
+            defer { isSyncing = false }
+
+            if scrollView === gridScrollView {
+                channelScrollView?.contentOffset.y = scrollView.contentOffset.y
+                timelineScrollView?.contentOffset.x = scrollView.contentOffset.x
+            } else if scrollView === channelScrollView {
+                gridScrollView?.contentOffset.y = scrollView.contentOffset.y
+            } else if scrollView === timelineScrollView {
+                gridScrollView?.contentOffset.x = scrollView.contentOffset.x
+            }
         }
-        let now = Date()
-        let end = guideEndOfDay(selectedDay)
-        if now <= baseStart || now >= end {
-            nowX = nil
-        } else {
-            let mins = now.timeIntervalSince(baseStart) / 60.0
-            nowX = CGFloat(mins) * guidePxPerMinute
+    }
+
+    class GuideGridContainerView: UIView {
+        private var channelWidth: CGFloat
+        private var headerHeight: CGFloat
+        private var gridWidth: CGFloat
+        private var totalHeight: CGFloat
+
+        let cornerView = UIView()
+        let timelineScrollView = UIScrollView()
+        let channelScrollView = UIScrollView()
+        let gridScrollView = UIScrollView()
+
+        let cornerLabel = UILabel()
+        var timelineHost: UIHostingController<TimelineContent>
+        var channelHost: UIHostingController<ChannelContent>
+        var gridHost: UIHostingController<GridContent>
+
+        private let vSeparator = UIView()
+        private let hSeparator = UIView()
+
+        init(
+            channelWidth: CGFloat,
+            headerHeight: CGFloat,
+            gridWidth: CGFloat,
+            totalHeight: CGFloat,
+            timelineContent: TimelineContent,
+            channelContent: ChannelContent,
+            gridContent: GridContent,
+            coordinator: Coordinator
+        ) {
+            self.channelWidth = channelWidth
+            self.headerHeight = headerHeight
+            self.gridWidth = gridWidth
+            self.totalHeight = totalHeight
+
+            self.timelineHost = UIHostingController(rootView: timelineContent)
+            self.channelHost = UIHostingController(rootView: channelContent)
+            self.gridHost = UIHostingController(rootView: gridContent)
+
+            super.init(frame: .zero)
+
+            setupCornerView()
+            setupScrollViews(coordinator: coordinator)
+            setupSeparators()
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        private func setupCornerView() {
+            cornerView.backgroundColor = .systemBackground
+            cornerLabel.text = "Channel"
+            cornerLabel.font = .boldSystemFont(ofSize: 11)
+            cornerLabel.textColor = .secondaryLabel
+            cornerLabel.textAlignment = .center
+            cornerLabel.translatesAutoresizingMaskIntoConstraints = false
+            cornerView.addSubview(cornerLabel)
+
+            NSLayoutConstraint.activate([
+                cornerLabel.centerXAnchor.constraint(equalTo: cornerView.centerXAnchor),
+                cornerLabel.centerYAnchor.constraint(equalTo: cornerView.centerYAnchor)
+            ])
+            addSubview(cornerView)
+        }
+
+        private func setupScrollViews(coordinator: Coordinator) {
+            // 1. Timeline ScrollView: Horizontal only, pinned to top
+            timelineScrollView.delegate = coordinator
+            timelineScrollView.showsHorizontalScrollIndicator = false
+            timelineScrollView.showsVerticalScrollIndicator = false
+            timelineScrollView.alwaysBounceVertical = false
+            timelineScrollView.alwaysBounceHorizontal = true
+            timelineScrollView.bounces = true
+            timelineScrollView.backgroundColor = .systemBackground
+            timelineScrollView.contentInsetAdjustmentBehavior = .never
+            timelineScrollView.contentInset = .zero
+
+            timelineHost.view.backgroundColor = .clear
+            timelineHost.view.insetsLayoutMarginsFromSafeArea = false
+            if #available(iOS 16.4, *) {
+                timelineHost.safeAreaRegions = []
+            }
+            timelineScrollView.addSubview(timelineHost.view)
+            addSubview(timelineScrollView)
+            coordinator.timelineScrollView = timelineScrollView
+
+            // 2. Channel ScrollView: Vertical only, pinned at x=0
+            channelScrollView.delegate = coordinator
+            channelScrollView.showsHorizontalScrollIndicator = false
+            channelScrollView.showsVerticalScrollIndicator = false
+            channelScrollView.alwaysBounceVertical = true
+            channelScrollView.alwaysBounceHorizontal = false
+            channelScrollView.bounces = true
+            channelScrollView.backgroundColor = .systemBackground
+            channelScrollView.contentInsetAdjustmentBehavior = .never
+            channelScrollView.contentInset = .zero
+
+            channelHost.view.backgroundColor = .clear
+            channelHost.view.insetsLayoutMarginsFromSafeArea = false
+            if #available(iOS 16.4, *) {
+                channelHost.safeAreaRegions = []
+            }
+            channelScrollView.addSubview(channelHost.view)
+            addSubview(channelScrollView)
+            coordinator.channelScrollView = channelScrollView
+
+            // 3. Grid ScrollView: Full 2D scrolling
+            gridScrollView.delegate = coordinator
+            gridScrollView.showsHorizontalScrollIndicator = true
+            gridScrollView.showsVerticalScrollIndicator = true
+            gridScrollView.alwaysBounceVertical = true
+            gridScrollView.alwaysBounceHorizontal = true
+            gridScrollView.bounces = true
+            gridScrollView.backgroundColor = .clear
+            gridScrollView.contentInsetAdjustmentBehavior = .never
+            gridScrollView.contentInset = .zero
+
+            gridHost.view.backgroundColor = .clear
+            gridHost.view.insetsLayoutMarginsFromSafeArea = false
+            if #available(iOS 16.4, *) {
+                gridHost.safeAreaRegions = []
+            }
+            gridScrollView.addSubview(gridHost.view)
+            addSubview(gridScrollView)
+            coordinator.gridScrollView = gridScrollView
+        }
+
+        private func setupSeparators() {
+            vSeparator.backgroundColor = UIColor.separator.withAlphaComponent(0.2)
+            addSubview(vSeparator)
+
+            hSeparator.backgroundColor = UIColor.separator.withAlphaComponent(0.2)
+            addSubview(hSeparator)
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            attachHostingControllers()
+        }
+
+        private func attachHostingControllers() {
+            guard let parentVC = findViewController() else { return }
+            if timelineHost.parent == nil {
+                parentVC.addChild(timelineHost)
+                timelineHost.didMove(toParent: parentVC)
+            }
+            if channelHost.parent == nil {
+                parentVC.addChild(channelHost)
+                channelHost.didMove(toParent: parentVC)
+            }
+            if gridHost.parent == nil {
+                parentVC.addChild(gridHost)
+                gridHost.didMove(toParent: parentVC)
+            }
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            let w = bounds.width
+            let h = bounds.height
+            guard w > 0, h > 0 else { return }
+
+            let gridViewportW = max(0, w - channelWidth)
+            let gridViewportH = max(0, h - headerHeight)
+
+            // Quad 1: Top Left Corner (Fixed)
+            cornerView.frame = CGRect(x: 0, y: 0, width: channelWidth, height: headerHeight)
+
+            // Quad 2: Top Right Timeline (Horizontal scroll only)
+            timelineScrollView.frame = CGRect(x: channelWidth, y: 0, width: gridViewportW, height: headerHeight)
+            timelineHost.view.frame = CGRect(x: 0, y: 0, width: gridWidth, height: headerHeight)
+            timelineScrollView.contentSize = CGSize(width: gridWidth, height: headerHeight)
+
+            // Quad 3: Bottom Left Channels (Vertical scroll only - pinned to left edge)
+            channelScrollView.frame = CGRect(x: 0, y: headerHeight, width: channelWidth, height: gridViewportH)
+            channelHost.view.frame = CGRect(x: 0, y: 0, width: channelWidth, height: totalHeight)
+            channelScrollView.contentSize = CGSize(width: channelWidth, height: totalHeight)
+
+            // Quad 4: Bottom Right Grid (2D scroll)
+            gridScrollView.frame = CGRect(x: channelWidth, y: headerHeight, width: gridViewportW, height: gridViewportH)
+            gridHost.view.frame = CGRect(x: 0, y: 0, width: gridWidth, height: totalHeight)
+            gridScrollView.contentSize = CGSize(width: gridWidth, height: totalHeight)
+
+            // Separators
+            vSeparator.frame = CGRect(x: channelWidth, y: 0, width: 1, height: h)
+            hSeparator.frame = CGRect(x: 0, y: headerHeight, width: w, height: 1)
+        }
+
+        func update(
+            channelWidth: CGFloat,
+            headerHeight: CGFloat,
+            gridWidth: CGFloat,
+            totalHeight: CGFloat,
+            timelineContent: TimelineContent,
+            channelContent: ChannelContent,
+            gridContent: GridContent
+        ) {
+            self.channelWidth = channelWidth
+            self.headerHeight = headerHeight
+            self.gridWidth = gridWidth
+            self.totalHeight = totalHeight
+
+            timelineHost.rootView = timelineContent
+            channelHost.rootView = channelContent
+            gridHost.rootView = gridContent
+
+            setNeedsLayout()
         }
     }
 }
 
-// MARK: - Equatable Lightweight Program Block View
-struct ProgramBlockView: View, Equatable {
-    let b: RenderBlock
-    let channel: LiveTvChannelDto
-    let appState: AppState
-
-    static func == (lhs: ProgramBlockView, rhs: ProgramBlockView) -> Bool {
-        return lhs.b == rhs.b
-    }
-
-    var body: some View {
-        let jf = buildJFProgram(from: b.item, channel: channel, clampedStart: b.s, clampedEnd: b.e)
-
-        NavigationLink(destination: ProgramView(program: jf, appState: appState).environmentObject(appState)) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .top) {
-                    Text(b.item.name ?? "Untitled")
-                        .font(.caption).bold()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
-                        .allowsTightening(true)
-                    
-                    if b.isRecording {
-                        Spacer(minLength: 2)
-                        Image(systemName: "record.circle")
-                            .foregroundColor(.red)
-                            .font(.system(size: 10))
-                    }
-                }
-                Text(b.formattedTimeString)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
+extension UIView {
+    func findViewController() -> UIViewController? {
+        var responder: UIResponder? = self
+        while let next = responder?.next {
+            if let vc = next as? UIViewController {
+                return vc
             }
-            .padding(6)
-            .frame(width: max(0, b.w), height: guideRowHeight - 8, alignment: .leading)
-            .background(b.color.opacity(0.15))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(b.color.opacity(0.3), lineWidth: 1))
-            .contentShape(Rectangle())
+            responder = next
         }
-        .buttonStyle(.plain)
-        .offset(x: b.x, y: 4)
-        .id(b.id)
-    }
-
-    private func buildJFProgram(from item: BaseItemDto, channel: LiveTvChannelDto, clampedStart s: Date, clampedEnd e: Date) -> JFProgram {
-        let fallbackId = item.id ?? "epg_\(channel.id)_\(Int(s.timeIntervalSince1970))"
-        var dict: [String: Any] = [
-            "Id": fallbackId,
-            "Name": item.name ?? "",
-            "StartDate": guideIso8601InternetDateTime.string(from: s),
-            "EndDate": guideIso8601InternetDateTime.string(from: e),
-            "ChannelId": channel.id
-        ]
-        if let cn = channel.name { dict["ChannelName"] = cn }
-        if let ov = item.overview { dict["Overview"] = ov }
-        if let et = item.episodeTitle { dict["EpisodeTitle"] = et }
-        if let r = item.officialRating { dict["OfficialRating"] = r }
-        if let pi = item.parentIndexNumber { dict["ParentIndexNumber"] = pi }
-        if let idx = item.indexNumber { dict["IndexNumber"] = idx }
-        if let rep = item.isRepeat { dict["IsRepeat"] = rep }
-        if let isM = item.isMovie { dict["IsMovie"] = isM }
-        if let gs = item.genres { dict["Genres"] = gs }
-        if let iid = item.id { dict["ItemId"] = iid }
-        if let sid = item.seriesId { dict["SeriesId"] = sid }
-        if let isS = item.isSeries { dict["IsSeries"] = isS }
-        if let sname = item.seriesName { dict["SeriesName"] = sname }
-        if let viaJSON = JFProgram(json: dict) {
-            return viaJSON
-        }
-        let minDict: [String: Any] = ["Id": fallbackId, "Name": item.name ?? ""]
-        return JFProgram(json: minDict) ?? JFProgram(json: ["Id": fallbackId, "Name": ""])!
+        return nil
     }
 }

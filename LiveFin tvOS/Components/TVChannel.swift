@@ -2,7 +2,7 @@
 //  TVChannel.swift
 //  LiveFin
 //
-//  Created by Kervens on 7/17/26.
+//  Created by KPGamingz on 7/17/26.
 //
 
 import Foundation

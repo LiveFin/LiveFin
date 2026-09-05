@@ -31,6 +31,7 @@ final class DragonetPlayerViewModel: ObservableObject {
     @Published var isReloading: Bool      = false
     @Published var isBuffering: Bool      = true
     @Published var hasRenderedVideo: Bool = false
+    @Published var isSwitchingChannel: Bool = false
     
     @Published var disableNowPlayingUpdates: Bool = false {
         didSet {
@@ -83,6 +84,7 @@ final class DragonetPlayerViewModel: ObservableObject {
     private var hasStartedPlayback = false
     private var intentionallyPaused = false
     private var lastPlaybackTime: CMTime = .invalid
+    private var switchChannelTask: Task<Void, Never>?
 
     init(streamURL: URL, channel: LiveTvChannelDto?, program: JFProgram? = nil, appState: AppState, isMultiView: Bool = false) {
         self.streamURL = streamURL
@@ -100,9 +102,6 @@ final class DragonetPlayerViewModel: ObservableObject {
         let item = AVPlayerItem(asset: asset)
         
         self.player = AVPlayer(playerItem: item)
-        
-        // CRITICAL FIX: Setting this to false forces AVPlayer to start playback immediately
-        // as soon as the first playable chunk is available, rather than waiting to build a massive buffer.
         self.player.automaticallyWaitsToMinimizeStalling = false
         
         if #available(iOS 15.0, *) {
@@ -135,24 +134,20 @@ final class DragonetPlayerViewModel: ObservableObject {
             }
         }
         
-        // Ensure we automatically start playback once the item is ready
         self.intentionallyPaused = false
         self.player.play()
     }
 
-    deinit {
-        // Handled deterministically by `explicitCleanup()`
-    }
+    deinit { }
     
     private func observeItem(_ item: AVPlayerItem) {
         likelyToKeepUpObserver?.invalidate()
         bufferEmptyObserver?.invalidate()
         
-        // Because automaticallyWaitsToMinimizeStalling is false, we MUST manually
-        // resume playback when the buffer recovers from a stall.
         likelyToKeepUpObserver = item.observe(\.isPlaybackLikelyToKeepUp, options: [.initial, .new]) { [weak self] item, _ in
             guard let self = self else { return }
             DispatchQueue.main.async {
+                guard !self.isSwitchingChannel else { return }
                 if item.isPlaybackLikelyToKeepUp {
                     if self.isBuffering {
                         self.isBuffering = false
@@ -167,6 +162,7 @@ final class DragonetPlayerViewModel: ObservableObject {
         bufferEmptyObserver = item.observe(\.isPlaybackBufferEmpty, options: [.initial, .new]) { [weak self] item, _ in
             guard let self = self else { return }
             DispatchQueue.main.async {
+                guard !self.isSwitchingChannel else { return }
                 if item.isPlaybackBufferEmpty {
                     self.isBuffering = true
                 }
@@ -174,9 +170,11 @@ final class DragonetPlayerViewModel: ObservableObject {
         }
     }
     
-    /// Thread-safe cleanup explicitly triggered when the view disappears or is dismissed.
     func explicitCleanup() {
         guard !preventCleanupOnDeinit else { return }
+        
+        switchChannelTask?.cancel()
+        switchChannelTask = nil
         
         let tObserver = timeObserver
         let pObserver = progressObserver
@@ -220,6 +218,103 @@ final class DragonetPlayerViewModel: ObservableObject {
         preventCleanupOnDeinit = true
     }
     
+    // MARK: - Channel Switching
+    
+    func switchChannel(to newChannel: LiveTvChannelDto, program: JFProgram? = nil) {
+        guard newChannel.id != self.channel?.id else { return }
+        
+        switchChannelTask?.cancel()
+        self.isSwitchingChannel = true
+        
+        let ticks = safeTicks(from: player.currentTime())
+        if let oldCid = channel?.id {
+            appState.reportPlaybackStopped(itemId: oldCid, positionTicks: ticks)
+            appState.stopEPGPolling()
+        }
+        
+        player.pause()
+        likelyToKeepUpObserver?.invalidate()
+        bufferEmptyObserver?.invalidate()
+        player.replaceCurrentItem(with: nil)
+        
+        self.isBuffering = true
+        self.hasRenderedVideo = false
+        self.lastPlaybackTime = .invalid
+        
+        self.channel = newChannel
+        self.program = program
+        self.isRecording = (program?.timerId != nil || program?.seriesTimerId != nil)
+        
+        let displayTitle = program?.name ?? newChannel.name
+        let displaySubtitle = program?.episodeTitle ?? program?.overview
+        let targetId = program?.id ?? newChannel.id
+        
+        self.appState.currentProgramTitle = displayTitle
+        self.appState.currentProgramSubtitle = displaySubtitle
+        self.appState.currentProgramId = targetId
+        self.appState.currentProgramStartDate = program?.startDate
+        self.appState.currentProgramEndDate = program?.endDate
+        self.appState.currentProgramIsMovie = program?.isMovie ?? false
+        self.appState.currentProgramGenres = program?.genres
+        
+        if !self.isMultiView {
+            self.lastNowPlayingTitle = nil
+            self.lastNowPlayingSubtitle = nil
+            self.lastNowPlayingImageId = nil
+            restoreNowPlaying()
+        }
+        
+        switchChannelTask = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            
+            let streamURLString: String?
+            if let resolved = await JFOpenLiveStreamService.resolveStreamURL(appState: self.appState, channelId: newChannel.id) {
+                streamURLString = resolved
+            } else {
+                let server = self.appState.serverURL.hasSuffix("/") ? String(self.appState.serverURL.dropLast()) : self.appState.serverURL
+                let playSessionId = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+                streamURLString = "\(server)/Videos/\(newChannel.id)/live.m3u8?DeviceId=\(self.appState.deviceId)&MediaSourceId=\(newChannel.id)&PlaySessionId=\(playSessionId)&api_key=\(self.appState.accessToken)"
+            }
+            
+            guard !Task.isCancelled else { return }
+            
+            guard let urlStr = streamURLString, let freshURL = URL(string: urlStr) else {
+                self.isBuffering = false
+                self.isSwitchingChannel = false
+                return
+            }
+            
+            self.streamURL = freshURL
+            
+            let userAgent = "LiveFin iOS/\(self.appState.clientVersion)"
+            var headers: [String: String] = ["User-Agent": userAgent]
+            headers["X-Emby-Token"] = self.appState.accessToken
+            headers["X-Emby-User-Id"] = self.appState.userID
+
+            let asset = AVURLAsset(url: freshURL, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
+            let freshItem = AVPlayerItem(asset: asset)
+            
+            self.player.replaceCurrentItem(with: freshItem)
+            self.observeItem(freshItem)
+            
+            self.appState.startEPGPolling(for: newChannel.id)
+            self.appState.reportPlaybackStart(itemId: newChannel.id, canSeek: false)
+            self.appState.reportPlaybackProgress(itemId: newChannel.id, positionTicks: 0, canSeek: false, isPaused: false)
+            
+            self.isSwitchingChannel = false
+            self.intentionallyPaused = false
+            self.player.play()
+            
+            if #available(iOS 15.0, *) {
+                _ = try? await asset.load(.duration)
+                _ = try? await asset.loadMediaSelectionGroup(for: .legible)
+                self.applyCC()
+            }
+            
+            await self.checkRecordingStatus()
+        }
+    }
+    
     // MARK: - Captions
     
     private func applyCC() {
@@ -234,9 +329,7 @@ final class DragonetPlayerViewModel: ObservableObject {
                 group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible)
             }
             
-            guard let safeGroup = group else { return }
-            
-            guard self.player.currentItem == item else { return }
+            guard let safeGroup = group, self.player.currentItem == item else { return }
             
             let currentOption = item.currentMediaSelection.selectedMediaOption(in: safeGroup)
             let isCurrentlyEnabled = currentOption != nil
@@ -255,8 +348,6 @@ final class DragonetPlayerViewModel: ObservableObject {
     
     // MARK: - MultiView State Hand-off
     
-    /// Prepares this player to be adopted by another ViewModel, stripping local observers
-    /// but leaving the playback state entirely intact for seamless handoff.
     func transferPlayer() -> AVPlayer {
         if let tObserver = timeObserver { player.removeTimeObserver(tObserver); self.timeObserver = nil }
         if let pObserver = progressObserver { player.removeTimeObserver(pObserver); self.progressObserver = nil }
@@ -309,14 +400,10 @@ final class DragonetPlayerViewModel: ObservableObject {
         startLiveEdgeObserver()
         setupReportingObservers()
         
-        // We MUST re-register the Now Playing & Remote Command observers here because
-        // the explicit cleanup completely wipes them before swapping out the stream!
         if !self.isMultiView {
             setupNowPlayingObservers()
             setupRemoteCommands()
             
-            // CRITICAL: We must reset our local caches here, otherwise returning to
-            // the original stream ignores the update thinking it never changed.
             self.lastNowPlayingTitle = nil
             self.lastNowPlayingSubtitle = nil
             self.lastNowPlayingImageId = nil
@@ -329,6 +416,7 @@ final class DragonetPlayerViewModel: ObservableObject {
         if let newCid = self.channel?.id {
             appState.startEPGPolling(for: newCid)
             appState.reportPlaybackStart(itemId: newCid, canSeek: false)
+            appState.reportPlaybackProgress(itemId: newCid, positionTicks: 0, canSeek: false, isPaused: false)
         }
         
         Task { await checkRecordingStatus() }
@@ -347,7 +435,6 @@ final class DragonetPlayerViewModel: ObservableObject {
         }
         
         player.play()
-        
         startLiveEdgeObserver()
         setupReportingObservers()
         
@@ -355,6 +442,7 @@ final class DragonetPlayerViewModel: ObservableObject {
         
         if let itemId = channel?.id {
             appState.reportPlaybackStart(itemId: itemId, canSeek: false)
+            appState.reportPlaybackProgress(itemId: itemId, positionTicks: 0, canSeek: false, isPaused: false)
             appState.reportFullClientCapabilities()
         }
     }
@@ -437,6 +525,7 @@ final class DragonetPlayerViewModel: ObservableObject {
     }
 
     func goToLive() {
+        guard !isSwitchingChannel else { return }
         isReloading = true
         isBuffering = true
         hasRenderedVideo = false
@@ -497,6 +586,8 @@ final class DragonetPlayerViewModel: ObservableObject {
             let ticks = self.safeTicks(from: player.currentTime())
             
             DispatchQueue.main.async {
+                guard !self.isSwitchingChannel else { return }
+                
                 if status == .waitingToPlayAtSpecifiedRate {
                     self.isBuffering = true
                 }
@@ -515,7 +606,7 @@ final class DragonetPlayerViewModel: ObservableObject {
                 }
             }
             
-            if let itemId = self.channel?.id {
+            if let itemId = self.channel?.id, !self.isSwitchingChannel {
                 let isPaused = (status == .paused)
                 Task { @MainActor in
                     self.appState.reportPlaybackProgress(itemId: itemId, positionTicks: ticks, canSeek: false, isPaused: isPaused)
@@ -529,8 +620,10 @@ final class DragonetPlayerViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] notification in
                 guard let self = self,
+                      !self.isSwitchingChannel,
                       let item = notification.object as? AVPlayerItem,
-                      item == self.player.currentItem else { return }
+                      let current = self.player.currentItem,
+                      item === current else { return }
                 
                 if self.isMultiView {
                     self.onStreamEnded?()
@@ -546,8 +639,10 @@ final class DragonetPlayerViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] notification in
                 guard let self = self,
+                      !self.isSwitchingChannel,
                       let item = notification.object as? AVPlayerItem,
-                      item == self.player.currentItem else { return }
+                      let current = self.player.currentItem,
+                      item === current else { return }
                 
                 if self.isMultiView {
                     self.onStreamEnded?()
@@ -563,8 +658,10 @@ final class DragonetPlayerViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] notification in
                 guard let self = self,
+                      !self.isSwitchingChannel,
                       let item = notification.object as? AVPlayerItem,
-                      item == self.player.currentItem else { return }
+                      let current = self.player.currentItem,
+                      item === current else { return }
                 
                 self.isBuffering = true
             }
@@ -588,7 +685,7 @@ final class DragonetPlayerViewModel: ObservableObject {
         )
         .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
         .sink { [weak self] (title, subtitle, progId) in
-            self?.updateNowPlayingInfo(title: title, subtitle: subtitle, progId: progId)
+            self?.updateNowPlayingInfo(title: title, subtitle: progId == nil ? nil : subtitle, progId: progId)
         }
         .store(in: &cancellables)
     }
@@ -713,6 +810,7 @@ final class DragonetPlayerViewModel: ObservableObject {
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
+                guard !self.isSwitchingChannel else { return }
                 if self.lastPlaybackTime.isValid && time != self.lastPlaybackTime {
                     if !self.hasRenderedVideo {
                         self.hasRenderedVideo = true
@@ -728,14 +826,20 @@ final class DragonetPlayerViewModel: ObservableObject {
     }
     
     private func setupReportingObservers() {
-        guard let itemId = channel?.id else { return }
+        if let pObserver = progressObserver {
+            player.removeTimeObserver(pObserver)
+            self.progressObserver = nil
+        }
         
         let interval = CMTime(seconds: 10, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
         progressObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            guard let self = self else { return }
+            guard let self = self,
+                  let currentItemId = self.channel?.id,
+                  !self.isSwitchingChannel else { return }
+            
             let ticks = self.safeTicks(from: time)
             Task { @MainActor in
-                self.appState.reportPlaybackProgress(itemId: itemId, positionTicks: ticks, canSeek: false)
+                self.appState.reportPlaybackProgress(itemId: currentItemId, positionTicks: ticks, canSeek: false)
             }
         }
     }
@@ -759,8 +863,6 @@ final class DragonetPlayerViewModel: ObservableObject {
             isAtLiveEdge = true
         }
     }
-
-    // MARK: - Helpers
 
     nonisolated private func safeTicks(from time: CMTime) -> Int64 {
         let seconds = CMTimeGetSeconds(time)
@@ -830,6 +932,9 @@ struct DragonetPlayerView: View {
     
     @State private var showMultiView = false
     @State private var showAddChannelSheet = false
+    @State private var showChannelDrawer = false
+    @State private var availableChannels: [LiveTvChannelDto] = []
+    @State private var channelPrograms: [String: JFProgram] = [:]
     @State private var multiVM: DragonetMultiViewModel?
     @State private var isTransitioningToMultiView = false
 
@@ -849,6 +954,7 @@ struct DragonetPlayerView: View {
 
     var effectiveProgram: JFProgram? {
         if let p = vm.program { return p }
+        if let cid = vm.channel?.id, let p = channelPrograms[cid] { return p }
         let id = appState.currentProgramId ?? "manual_\(vm.channel?.id ?? UUID().uuidString)"
         var dict: [String: Any] = [:]
         dict["Id"] = id
@@ -888,9 +994,33 @@ struct DragonetPlayerView: View {
 
             landscapeOverlay
                 .zIndex(3)
-                .opacity(vm.controlsVisible ? 1 : 0)
-                .allowsHitTesting(vm.controlsVisible)
+                .opacity(vm.controlsVisible && !showChannelDrawer ? 1 : 0)
+                .allowsHitTesting(vm.controlsVisible && !showChannelDrawer)
+
+            if showChannelDrawer {
+                channelSwitchDrawer
+                    .zIndex(4)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .gesture(
+            DragGesture(minimumDistance: 25)
+                .onEnded { value in
+                    if value.translation.height < -40 {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            showChannelDrawer = true
+                        }
+                        playerController?.cancelTimer()
+                    } else if value.translation.height > 40 {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            showChannelDrawer = false
+                        }
+                        if vm.controlsVisible {
+                            playerController?.resetAutoHideTimer()
+                        }
+                    }
+                }
+        )
         .sheet(isPresented: $showAddChannelSheet) {
             let activeIds = [vm.channel?.id].compactMap { $0 }
             MultiViewChannelPickerView(appState: appState, activeChannelIds: activeIds) { url, channel, program in
@@ -951,6 +1081,21 @@ struct DragonetPlayerView: View {
                 }
             }
         }
+        .task {
+            await fetchChannelsAndPrograms()
+            
+            // Periodically refresh airing programs when shows end or guide updates
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30_000_000_000) // 30 seconds
+                await checkAndRefreshAiringProgramsIfNeeded()
+            }
+        }
+        .onChange(of: appState.currentProgramId) { _, _ in
+            // Synchronize channel programs when EPG polling registers a new program
+            Task {
+                await fetchAiringPrograms()
+            }
+        }
         .onDisappear {
             if !isTransitioningToMultiView {
                 AppDelegate.orientationLock = .portrait
@@ -961,8 +1106,271 @@ struct DragonetPlayerView: View {
             }
         }
         .onChange(of: vm.controlsVisible) { _, visible in
-            if visible { playerController?.resetAutoHideTimer() }
-            else       { playerController?.cancelTimer() }
+            if visible && !showChannelDrawer {
+                playerController?.resetAutoHideTimer()
+            } else {
+                playerController?.cancelTimer()
+            }
+        }
+    }
+    
+    // MARK: - Channel Switcher Drawer (Swipe-Up Row)
+    
+    private var channelSwitchDrawer: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            
+            VStack(alignment: .center, spacing: 8) {
+                // Drag Handle
+                HStack {
+                    Capsule()
+                        .fill(Color.white.opacity(0.4))
+                        .frame(width: 36, height: 4)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 8)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        showChannelDrawer = false
+                    }
+                }
+                
+                Text("Quick Switch")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 12) {
+                            ForEach(availableChannels) { ch in
+                                let isCurrent = ch.id == vm.channel?.id
+                                let prog = channelPrograms[ch.id]
+                                let targetImageId = prog?.id ?? ch.id
+                                let isRecording = (prog?.timerId != nil || prog?.seriesTimerId != nil)
+                                
+                                Button {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        showChannelDrawer = false
+                                    }
+                                    vm.switchChannel(to: ch, program: prog)
+                                } label: {
+                                    ZStack {
+                                        let server = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
+                                        let imageURLString = "\(server)/Items/\(targetImageId)/Images/Primary?api_key=\(appState.accessToken)&maxWidth=500&quality=80"
+                                        let imageURL = URL(string: imageURLString)
+                                        
+                                        CachedAsyncImage(url: imageURL) { phase in
+                                            switch phase {
+                                            case .success(let img):
+                                                img
+                                                    .resizable()
+                                                    .aspectRatio(contentMode: .fill)
+                                            default:
+                                                Color.white.opacity(0.08)
+                                            }
+                                        }
+                                        .frame(width: 150, height: 84)
+                                        .clipped()
+                                        
+                                        LinearGradient(
+                                            colors: [.clear, Color.black.opacity(0.8)],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                        
+                                        VStack {
+                                            Spacer()
+                                            HStack {
+                                                ChannelImageView(
+                                                    baseUrl: appState.serverURL,
+                                                    apiKey: appState.accessToken,
+                                                    channelId: ch.id
+                                                )
+                                                .frame(width: 30, height: 30)
+                                                .shadow(color: .black.opacity(0.9), radius: 3)
+                                                
+                                                Spacer()
+                                                
+                                                if isRecording {
+                                                    Image(systemName: "record.circle")
+                                                        .font(.system(size: 15))
+                                                        .foregroundStyle(.red)
+                                                        .shadow(color: .black.opacity(0.6), radius: 3, x: 0, y: 1)
+                                                }
+                                            }
+                                            .padding(6)
+                                        }
+                                    }
+                                    .frame(width: 150, height: 84)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .stroke(isCurrent ? Color.accentColor : Color.white.opacity(0.18), lineWidth: isCurrent ? 2.5 : 1)
+                                    )
+                                    .shadow(color: isCurrent ? Color.accentColor.opacity(0.35) : Color.black.opacity(0.3), radius: 6)
+                                }
+                                .buttonStyle(.plain)
+                                .id(ch.id)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 2)
+                    }
+                    .frame(height: 90)
+                    .onAppear {
+                        if let currentId = vm.channel?.id {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                proxy.scrollTo(currentId, anchor: .center)
+                            }
+                        }
+                    }
+                    .onChange(of: showChannelDrawer) { _, isShown in
+                        if isShown, let currentId = vm.channel?.id {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                proxy.scrollTo(currentId, anchor: .center)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 4)
+            .padding(.bottom, 12)
+            .glassEffect(in: .rect(cornerRadius: 16.0))
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .ignoresSafeArea()
+    }
+    
+    // MARK: - Channel & Program Fetching
+    
+    private func fetchChannelsAndPrograms() async {
+        guard !appState.serverURL.isEmpty else { return }
+        let server = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
+        
+        var comps = URLComponents(string: "\(server)/LiveTv/Channels")
+        comps?.queryItems = [
+            URLQueryItem(name: "Limit", value: "500"),
+            URLQueryItem(name: "StartIndex", value: "0"),
+            URLQueryItem(name: "EnableImages", value: "true"),
+            URLQueryItem(name: "EnableUserData", value: "true")
+        ]
+        if !appState.userID.isEmpty {
+            comps?.queryItems?.append(URLQueryItem(name: "UserId", value: appState.userID))
+        }
+        guard let channelUrl = comps?.url else { return }
+        
+        var req = URLRequest(url: channelUrl)
+        req.httpMethod = "GET"
+        if !appState.accessToken.isEmpty {
+            req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+            req.setValue(appState.getAuthorizationHeader(), forHTTPHeaderField: "Authorization")
+        }
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return }
+            struct JFChannelQueryResult: Decodable {
+                let Items: [LiveTvChannelDto]?
+            }
+            let res = try JSONDecoder().decode(JFChannelQueryResult.self, from: data)
+            guard let channels = res.Items, !channels.isEmpty else { return }
+            
+            self.availableChannels = channels
+            await fetchAiringPrograms()
+        } catch {
+            print("Failed to fetch channels: \(error)")
+        }
+    }
+    
+    private func checkAndRefreshAiringProgramsIfNeeded() async {
+        let now = Date()
+        let hasExpiredProgram = channelPrograms.values.contains { prog in
+            if let end = prog.endDate { return end <= now }
+            if let start = prog.startDate, let ticks = prog.runTimeTicks {
+                let durationSec = TimeInterval(Double(ticks) / 10_000_000.0)
+                return start.addingTimeInterval(durationSec) <= now
+            }
+            return false
+        }
+        
+        if hasExpiredProgram || channelPrograms.isEmpty {
+            await fetchAiringPrograms()
+        }
+    }
+    
+    private func fetchAiringPrograms() async {
+        guard !appState.serverURL.isEmpty else { return }
+        let server = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
+        
+        var progComps = URLComponents(string: "\(server)/LiveTv/Programs")
+        progComps?.queryItems = [
+            URLQueryItem(name: "IsAiring", value: "true"),
+            URLQueryItem(name: "Limit", value: "500"),
+            URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,ChannelId,ProgramId,TimerId,SeriesTimerId,PrimaryImageAspectRatio")
+        ]
+        if !appState.userID.isEmpty {
+            progComps?.queryItems?.append(URLQueryItem(name: "userId", value: appState.userID))
+        }
+        
+        guard let progUrl = progComps?.url else { return }
+        var progReq = URLRequest(url: progUrl)
+        progReq.httpMethod = "GET"
+        if !appState.accessToken.isEmpty {
+            progReq.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+            progReq.setValue(appState.getAuthorizationHeader(), forHTTPHeaderField: "Authorization")
+        }
+        
+        do {
+            let (pData, pResp) = try await URLSession.shared.data(for: progReq)
+            guard let pHttp = pResp as? HTTPURLResponse, pHttp.statusCode == 200 else { return }
+            
+            if let root = try? JSONSerialization.jsonObject(with: pData) as? [String: Any],
+               let items = (root["Items"] ?? root["items"]) as? [[String: Any]] {
+                let now = Date()
+                var progMap: [String: JFProgram] = [:]
+                
+                for dict in items {
+                    if let program = JFProgram(json: dict), let cid = program.channelId {
+                        let notEnded: Bool = {
+                            if let end = program.endDate { return end > now }
+                            if let start = program.startDate, let ticks = program.runTimeTicks {
+                                return start.addingTimeInterval(TimeInterval(Double(ticks) / 10_000_000.0)) > now
+                            }
+                            return true
+                        }()
+                        
+                        if notEnded {
+                            progMap[cid] = program
+                        }
+                    }
+                }
+                
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    self.channelPrograms = progMap
+                }
+                
+                // Synchronize active player program if the current channel's program transitioned
+                if let currentChannelId = vm.channel?.id, let activeProgram = progMap[currentChannelId] {
+                    if vm.program?.id != activeProgram.id {
+                        vm.program = activeProgram
+                        appState.currentProgramTitle = activeProgram.name
+                        appState.currentProgramSubtitle = activeProgram.episodeTitle ?? activeProgram.overview
+                        appState.currentProgramId = activeProgram.id
+                        appState.currentProgramStartDate = activeProgram.startDate
+                        appState.currentProgramEndDate = activeProgram.endDate
+                        appState.currentProgramIsMovie = activeProgram.isMovie
+                        appState.currentProgramGenres = activeProgram.genres
+                        vm.restoreNowPlaying()
+                    }
+                }
+            }
+        } catch {
+            print("Failed to fetch airing programs: \(error)")
         }
     }
     
@@ -972,33 +1380,51 @@ struct DragonetPlayerView: View {
         ZStack {
             Color.black.ignoresSafeArea()
             
-            if let targetId = appState.currentProgramId ?? vm.channel?.id {
+            let effectiveProg = vm.program ?? channelPrograms[vm.channel?.id ?? ""]
+            let targetId = effectiveProg?.id ?? appState.currentProgramId ?? vm.channel?.id
+            
+            if let targetId = targetId {
                 let server = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
-                let urlString = "\(server)/Items/\(targetId)/Images/Primary?api_key=\(appState.accessToken)&maxWidth=1920&quality=100"
                 
-                AsyncImage(url: URL(string: urlString)) { phase in
-                    switch phase {
-                    case .empty:
-                        Color.black
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                    case .failure:
-                        ChannelImageView(
-                            baseUrl: appState.serverURL,
-                            apiKey: appState.accessToken,
-                            channelId: targetId
-                        )
-                        .aspectRatio(contentMode: .fit)
-                    @unknown default:
-                        EmptyView()
+                let cachedThumbnailURL = "\(server)/Items/\(targetId)/Images/Primary?api_key=\(appState.accessToken)&maxWidth=500&quality=80"
+                let highResBackdropURL = "\(server)/Items/\(targetId)/Images/Primary?api_key=\(appState.accessToken)&maxWidth=1280&quality=85"
+                
+                ZStack {
+                    // Instant cached image layer directly from memory/disk cache
+                    CachedAsyncImage(url: URL(string: cachedThumbnailURL)) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                        default:
+                            EmptyView()
+                        }
+                    }
+                    
+                    // High-resolution backdrop layer
+                    CachedAsyncImage(url: URL(string: highResBackdropURL)) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                        default:
+                            if let cid = vm.channel?.id {
+                                ChannelImageView(
+                                    baseUrl: appState.serverURL,
+                                    apiKey: appState.accessToken,
+                                    channelId: cid
+                                )
+                                .frame(maxWidth: 240, maxHeight: 240)
+                                .aspectRatio(contentMode: .fit)
+                            }
+                        }
                     }
                 }
-                .id(urlString) // Ensures Image reliably resets on URL/Metadata update
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea()
-                .opacity(0.3)
+                .opacity(0.35)
             }
         }
     }
@@ -1024,19 +1450,27 @@ struct DragonetPlayerView: View {
             onPlaybackError: onPlaybackError
         ) { vc in
             vc.onTap = { [weak vc] in
+                if showChannelDrawer {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        showChannelDrawer = false
+                    }
+                    return
+                }
                 withAnimation(.easeOut(duration: 0.2)) {
                     vm.controlsVisible.toggle()
                 }
                 if vm.controlsVisible { vc?.resetAutoHideTimer() }
             }
             vc.onAutoHide = {
-                withAnimation(.easeOut(duration: 0.4)) {
-                    vm.controlsVisible = false
+                if !showChannelDrawer {
+                    withAnimation(.easeOut(duration: 0.4)) {
+                        vm.controlsVisible = false
+                    }
                 }
             }
             playerController = vc
             
-            if vm.controlsVisible {
+            if vm.controlsVisible && !showChannelDrawer {
                 vc.resetAutoHideTimer()
             }
         }
@@ -1054,7 +1488,7 @@ struct DragonetPlayerView: View {
                             apiKey: appState.accessToken,
                             channelId: cid
                         )
-                        .id(cid) // Ensures Image reliably resets on Channel update
+                        .id(cid)
                         .frame(width: 50, height: 50)
                         .shadow(radius: 4)
                     }
@@ -1328,7 +1762,7 @@ extension View {
     func glassEffect<S: Shape>(in shape: S) -> some View {
         if #available(iOS 26, *) {
             self
-                .glassEffect(.regular)
+                .glassEffect(.regular, in: shape)
                 .clipShape(shape)
         } else {
             self
