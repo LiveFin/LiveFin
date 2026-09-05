@@ -95,7 +95,7 @@
 			);
 			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
 		};
-		EB5583D53013A15F003EF6F6 /* Exceptions for "Shared" folder in "LiveFin Watch App" target */ = {
+		EBA8FA34304BC6D100ECFEDB /* Exceptions for "Shared" folder in "LiveFin Watch App" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				"Resources/LiveFin-Aura.icon",
@@ -103,7 +103,6 @@
 				"Resources/LiveFin-Burple.icon",
 				"Resources/LiveFin-Jelly.icon",
 				"Resources/LiveFin-Noir.icon",
-				"Resources/LiveFin-Purple.icon",
 				"Resources/LiveFin-Real.icon",
 				"Resources/LiveFin-Rojo.icon",
 				"Resources/LiveFin-Slime.icon",
@@ -118,7 +117,7 @@
 		EB130A632EDB353D00381D60 /* Shared */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				EB5583D53013A15F003EF6F6 /* Exceptions for "Shared" folder in "LiveFin Watch App" target */,
+				EBA8FA34304BC6D100ECFEDB /* Exceptions for "Shared" folder in "LiveFin Watch App" target */,
 				EB18D7DC2FF2FEEB001123BC /* Exceptions for "Shared" folder in "LiveFin tvOS" target */,
 			);
 			path = Shared;
