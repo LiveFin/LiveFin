@@ -224,21 +224,43 @@ struct ChannelsView: View {
 
     func fetchCurrentPrograms(for channels: [LiveTvChannelDto]) async {
         guard let client = appState.client else { return }
-        let now = Date(); let later = Calendar.current.date(byAdding: .hour, value: 1, to: now)!
+        let now = Date()
+        let later = Calendar.current.date(byAdding: .hour, value: 1, to: now)!
+        let isoStr = ISO8601DateFormatter().string(from: now)
+        let laterStr = ISO8601DateFormatter().string(from: later)
         let programURL = client.configuration.url.appendingPathComponent("/LiveTv/Programs")
         var components = URLComponents(url: programURL, resolvingAgainstBaseURL: false)
-        components?.queryItems = [
-            URLQueryItem(name: "startDate", value: ISO8601DateFormatter().string(from: now)),
-            URLQueryItem(name: "endDate", value: ISO8601DateFormatter().string(from: later)),
-            URLQueryItem(name: "IsAiring", value: "true")
+        var queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "minEndDate", value: isoStr),
+            URLQueryItem(name: "maxStartDate", value: laterStr),
+            URLQueryItem(name: "startDate", value: isoStr),
+            URLQueryItem(name: "endDate", value: laterStr),
+            URLQueryItem(name: "IsAiring", value: "true"),
+            URLQueryItem(name: "Limit", value: "1000")
         ]
+        let userId = !appState.userID.isEmpty ? appState.userID : (appState.user?.id ?? "")
+        if !userId.isEmpty {
+            queryItems.append(URLQueryItem(name: "userId", value: userId))
+        }
+        components?.queryItems = queryItems
         guard let finalURL = components?.url else { return }
         var request = URLRequest(url: finalURL)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+        let authHeader = appState.getAuthorizationHeader()
+        if !authHeader.isEmpty {
+            request.setValue(authHeader, forHTTPHeaderField: "Authorization")
+        }
         do {
             let (data, _) = try await URLSession.shared.data(for: request)
-            let programResponse = try JSONDecoder().decode(ProgramsResponse.self, from: data)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .custom { d in
+                let c = try d.singleValueContainer()
+                let s = try c.decode(String.self)
+                if let dt = ChannelDetailView.parseFlexibleDate(s) { return dt }
+                throw DecodingError.dataCorruptedError(in: c, debugDescription: "Cannot parse date: \(s)")
+            }
+            let programResponse = try decoder.decode(ProgramsResponse.self, from: data)
             let currentPrograms = programResponse.items ?? []
             var updated: [LiveTvChannelDto] = []
             for var channel in channels {

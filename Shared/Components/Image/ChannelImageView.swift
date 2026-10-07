@@ -84,4 +84,3 @@ private struct ShadowIfLight: ViewModifier {
         }
     }
 }
-

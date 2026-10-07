@@ -9,8 +9,8 @@ import SwiftUI
 struct AboutView: View {
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var appState: AppState
+    @Environment(\.colorScheme) private var colorScheme
     
-    // State to control the presentation of the AlternateIconView sheet
     @State private var showingIconPicker = false
     
     var serverURLStripped: String {
@@ -19,17 +19,13 @@ struct AboutView: View {
     
     var body: some View {
         NavigationStack {
-            ScrollView { // Wrapped in a ScrollView to prevent cramping on smaller screens
+            ScrollView {
                 VStack(spacing: 24) {
-                    Image("Logo")
+                    Image(colorScheme == .dark ? "Logo with Text" : "Logo with Text Dark")
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 120, height: 120)
-                        .foregroundColor(.accentColor)
-                    
-                    Text("LiveFin")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
+                        .frame(width: 240, height: 240)
+
                     
                     Text("Version \(appState.clientVersion)")
                         .font(.subheadline)

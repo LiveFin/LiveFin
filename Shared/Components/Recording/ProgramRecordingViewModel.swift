@@ -123,6 +123,26 @@ final class ProgramRecordingViewModel: ObservableObject {
         let isRepeatEpisode = (program.isNew == false) || (program.isRepeat == true)
         return isRepeatEpisode
     }
+
+    var isSeriesNewOnly: Bool {
+        if activeTimerIsSeries {
+            if let id = activeTimerId, appState.seriesTimerRecordNewOnly[id] == true {
+                return true
+            }
+            return configuration.recordNewOnly
+        }
+        if let sid = program.seriesTimerId, appState.seriesTimerRecordNewOnly[sid] == true {
+            return true
+        }
+        return false
+    }
+
+    var isSkippedBySeriesRule: Bool {
+        guard isRecordingScheduled else { return false }
+        guard pinnedTimerId == nil && program.timerId == nil else { return false }
+        guard activeTimerIsSeries || program.seriesTimerId != nil else { return false }
+        return isSeriesNewOnly && !program.isNewEpisode
+    }
     
     init(program: JFProgram, appState: AppState) {
         self.program = program
@@ -172,6 +192,12 @@ final class ProgramRecordingViewModel: ObservableObject {
                     ($0.ProgramId != nil && $0.ProgramId == program.id)
                 }) {
                     seriesTimerId = existing.Id
+                    self.configuration.recordNewOnly = existing.RecordNewOnly ?? false
+                    self.configuration.isSeriesTimer = true
+                    let sid = existing.Id
+                    await MainActor.run {
+                        self.appState.seriesTimerRecordNewOnly[sid] = existing.RecordNewOnly ?? false
+                    }
                 }
             } catch {
                 print("Failed to check existing series timer: \(error)")
@@ -283,6 +309,7 @@ final class ProgramRecordingViewModel: ObservableObject {
             }
             
             await JellyfinTimerCache.shared.clearCache()
+            await appState.fetchSeriesTimers()
             
             if self.activeTimerId == nil {
                 await self.checkExistingTimer()
@@ -336,6 +363,7 @@ final class ProgramRecordingViewModel: ObservableObject {
                 if (200...299).contains(httpResponse.statusCode) {
                     self.activeTimerId = nil
                     await JellyfinTimerCache.shared.clearCache()
+                    await appState.fetchSeriesTimers()
                 } else {
                     let errStr = String(data: data, encoding: .utf8) ?? ""
                     errorMessage = "Failed to cancel (\(httpResponse.statusCode)): \(errStr)"
@@ -397,7 +425,7 @@ final class ProgramRecordingViewModel: ObservableObject {
                     URLQueryItem(name: "MaxStartDate", value: endStr),
                     URLQueryItem(name: "SearchTerm", value: sname),
                     URLQueryItem(name: "Limit", value: "100"),
-                    URLQueryItem(name: "Fields", value: "SeriesId,IsNew,ChannelName")
+                    URLQueryItem(name: "Fields", value: "SeriesId,IsNew,IsRepeat,IsPremiere,ChannelId,ChannelName,EpisodeTitle,ParentIndexNumber,IndexNumber")
                 ]
                 
                 if let reqUrl = comps?.url {
@@ -422,7 +450,7 @@ final class ProgramRecordingViewModel: ObservableObject {
                         URLQueryItem(name: "MinStartDate", value: nowStr),
                         URLQueryItem(name: "MaxStartDate", value: endStr),
                         URLQueryItem(name: "Limit", value: "100"),
-                        URLQueryItem(name: "Fields", value: "SeriesId,IsNew,ChannelName")
+                        URLQueryItem(name: "Fields", value: "SeriesId,IsNew,IsRepeat,IsPremiere,ChannelId,ChannelName,EpisodeTitle,ParentIndexNumber,IndexNumber")
                     ]
                     
                     if let reqUrl = comps?.url {
@@ -452,10 +480,28 @@ final class ProgramRecordingViewModel: ObservableObject {
             let cappedUpcoming = uniqueUpcoming.prefix(15)
             
             for p in cappedUpcoming {
-                await scheduleSingleNotification(for: p, center: center)
+                var item = p
+                if (item.channelName == nil || item.channelName?.isEmpty == true),
+                   let cid = item.channelId {
+                    if let cached = appState.channelNames[cid], !cached.isEmpty {
+                        item = JFProgram(copying: item, channelName: cached)
+                    } else if let resolved = await appState.resolveChannelName(for: cid) {
+                        item = JFProgram(copying: item, channelName: resolved)
+                    }
+                }
+                await scheduleSingleNotification(for: item, center: center)
             }
         } else {
-            await scheduleSingleNotification(for: self.program, center: center)
+            var item = self.program
+            if (item.channelName == nil || item.channelName?.isEmpty == true),
+               let cid = item.channelId {
+                if let cached = appState.channelNames[cid], !cached.isEmpty {
+                    item = JFProgram(copying: item, channelName: cached)
+                } else if let resolved = await appState.resolveChannelName(for: cid) {
+                    item = JFProgram(copying: item, channelName: resolved)
+                }
+            }
+            await scheduleSingleNotification(for: item, center: center)
         }
         
         Task { @MainActor in
@@ -469,7 +515,7 @@ final class ProgramRecordingViewModel: ObservableObject {
     
     private func scheduleSingleNotification(for p: JFProgram, center: UNUserNotificationCenter) async {
         #if os(iOS)
-        if notificationConfig.notifyNewEpisodesOnly && !(p.isNew ?? false) {
+        if notificationConfig.notifyNewEpisodesOnly && !p.isNewEpisode {
             return
         }
         
@@ -512,14 +558,30 @@ final class ProgramRecordingViewModel: ObservableObject {
             }
             
             let isRightNow = (interval == 0)
-            let isNew = (p.isNew ?? false)
+            let isNew = p.isNewEpisode
+            
+            let channelDisplayName: String = {
+                if let name = p.channelName, !name.isEmpty, name != "Live TV" && name != "your channel" {
+                    return name
+                }
+                if let cid = p.channelId, let cached = appState.channelNames[cid], !cached.isEmpty {
+                    return cached
+                }
+                if let name = program.channelName, !name.isEmpty, name != "Live TV" && name != "your channel" {
+                    return name
+                }
+                if let cid = program.channelId, let cached = appState.channelNames[cid], !cached.isEmpty {
+                    return cached
+                }
+                return "Live TV"
+            }()
             
             if isRightNow {
                 content.title = isNew ? "New Episode Premiere" : "Starting Now"
-                content.body = "\(p.name) starts right now on \(p.channelName ?? "Live TV")."
+                content.body = "\(p.name) starts right now on \(channelDisplayName)."
             } else {
                 content.title = isNew ? "Upcoming Premiere" : "Starting Soon"
-                content.body = "\(p.name) starts in \(timeString) on \(p.channelName ?? "Live TV")."
+                content.body = "\(p.name) starts in \(timeString) on \(channelDisplayName)."
             }
             
             content.sound = .default
@@ -527,7 +589,8 @@ final class ProgramRecordingViewModel: ObservableObject {
             // Attach payload for deep-linking when tapped
             content.userInfo = [
                 "action": isRightNow ? "play" : "open",
-                "programId": p.id
+                "programId": p.id,
+                "isNew": isNew
             ]
             
             let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: triggerDate)

@@ -79,6 +79,18 @@ struct JFProgram: Identifiable, Hashable {
         return false
     }
 
+    /// Returns true if this program represents a new episode / premiere airing
+    /// as opposed to a rerun or repeat.
+    var isNewEpisode: Bool {
+        if isNew == true { return true }
+        if isPremiere == true { return true }
+        if isNew == false || isRepeat == true { return false }
+        let hasEpisodeOrSeries = (episodeTitle?.isEmpty == false)
+            || (seriesName?.isEmpty == false)
+            || (parentIndexNumber != nil)
+        return (isRepeat == false || isRepeat == nil) && hasEpisodeOrSeries
+    }
+
     var runTimeSeconds: TimeInterval {
         if let t = runTimeTicks { return Double(t) / 10_000_000.0 } else { return 0 }
     }
@@ -305,8 +317,20 @@ final class ProgramViewModel: ObservableObject {
         if let start = program.startDate, start > Date() {
             airings.append(program)
         }
+        let enrichedAirings = airings.map { airing -> JFProgram in
+            if let name = airing.channelName, !name.isEmpty, name != "Live TV" {
+                return airing
+            }
+            if let cid = airing.channelId, let cached = appState.channelNames[cid], !cached.isEmpty {
+                return JFProgram(copying: airing, channelName: cached)
+            }
+            if let name = resolvedChannelName, !name.isEmpty {
+                return JFProgram(copying: airing, channelName: name)
+            }
+            return airing
+        }
         let count = await NotificationManager.shared.scheduleNotifications(
-            for: airings, groupKey: notificationGroupKey, config: config
+            for: enrichedAirings, groupKey: notificationGroupKey, config: config, channelNames: appState.channelNames
         )
         scheduledNotificationCount = count
     }
@@ -505,7 +529,7 @@ final class ProgramViewModel: ObservableObject {
             URLQueryItem(name: "MinStartDate", value: minStart),
             URLQueryItem(name: "MaxStartDate", value: maxStart),
             URLQueryItem(name: "Limit", value: "3000"),
-            URLQueryItem(name: "Fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,ChannelId,ChannelName,IsRepeat,SeriesId,ItemId,PrimaryImageAspectRatio")
+            URLQueryItem(name: "Fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,ChannelId,ChannelName,IsRepeat,IsPremiere,IsNew,SeriesId,ItemId,PrimaryImageAspectRatio")
         ]
         
         var allFound: [JFProgram] = []
@@ -579,7 +603,14 @@ final class ProgramViewModel: ObservableObject {
             guard let start = p.startDate else { continue }
             let key = p.id + "|" + (p.channelId ?? "") + "|" + String(Int(start.timeIntervalSince1970))
             if seenUpcomingKeys.insert(key).inserted {
-                newResults.append(p)
+                let enriched: JFProgram
+                if (p.channelName == nil || p.channelName?.isEmpty == true),
+                   let cid = p.channelId, let cached = appState.channelNames[cid], !cached.isEmpty {
+                    enriched = JFProgram(copying: p, channelName: cached)
+                } else {
+                    enriched = p
+                }
+                newResults.append(enriched)
             }
         }
         

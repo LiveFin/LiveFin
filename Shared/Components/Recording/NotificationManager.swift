@@ -43,7 +43,8 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate, Observabl
     func scheduleNotifications(
         for programs: [JFProgram],
         groupKey: String,
-        config: NotificationConfiguration
+        config: NotificationConfiguration,
+        channelNames: [String: String] = [:]
     ) async -> Int {
         await requestAuthorizationIfNeeded()
         cancelAllNotifications(for: groupKey)
@@ -55,22 +56,33 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate, Observabl
             guard let start = program.startDate else { continue }
             let fireDate = start.addingTimeInterval(-Double(config.notificationBufferSeconds))
             guard fireDate > Date() else { continue }
-            if config.notifyNewEpisodesOnly, program.isNew != true { continue }
+            if config.notifyNewEpisodesOnly, !program.isNewEpisode { continue }
 
             let content = UNMutableNotificationContent()
-            content.title = program.seriesName?.isEmpty == false ? program.seriesName! : program.name
+            let baseTitle = program.seriesName?.isEmpty == false ? program.seriesName! : program.name
+            content.title = program.isNewEpisode ? "New: \(baseTitle)" : baseTitle
             if let ep = program.episodeTitle, !ep.isEmpty, program.seriesName?.isEmpty == false {
                 content.subtitle = ep
             }
+            let channelDisplay: String = {
+                if let name = program.channelName, !name.isEmpty, name != "your channel" && name != "Live TV" {
+                    return name
+                }
+                if let cid = program.channelId, let cached = channelNames[cid], !cached.isEmpty {
+                    return cached
+                }
+                return "Live TV"
+            }()
             let minutes = config.notificationBufferSeconds / 60
             content.body = minutes > 0
-                ? "Starts in \(minutes) min on \(program.channelName ?? "your channel")"
-                : "Starting now on \(program.channelName ?? "your channel")"
+                ? "Starts in \(minutes) min on \(channelDisplay)"
+                : "Starting now on \(channelDisplay)"
             content.sound = .default
             content.userInfo = [
                 "programId": program.itemId ?? program.id,
                 "action": "view",
-                "groupKey": groupKey
+                "groupKey": groupKey,
+                "isNew": program.isNewEpisode
             ]
 
             let comps = Calendar.current.dateComponents(

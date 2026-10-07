@@ -1087,16 +1087,214 @@ struct PlanktonPlayerView: View {
     @EnvironmentObject var appState: AppState
     @StateObject private var vm: PlanktonPlayerViewModel
     @State private var playerController: DragonetPlayerController?
+    @State private var isPartiallyFolded: Bool = false
+    @State private var showEpisodesDrawer: Bool = false
     
     let onPlaybackError: ((String) -> Void)?
     
     init(playlist: [JFItemDto], startIndex: Int, seriesName: String?, isShuffled: Bool = false, appState: AppState, onPlaybackError: ((String) -> Void)? = nil) {
-        AppDelegate.orientationLock = .landscape
+        AppDelegate.orientationLock = UIDevice.isiPhoneDuo ? .allButUpsideDown : .landscape
         self.onPlaybackError = onPlaybackError
         _vm = StateObject(wrappedValue: PlanktonPlayerViewModel(playlist: playlist, startIndex: startIndex, seriesName: seriesName, isShuffled: isShuffled, appState: appState))
     }
     
     var body: some View {
+        DuoTabletopSplitLayout(isPartiallyFolded: isPartiallyFolded) {
+            tabletopVideoPane
+        } secondary: {
+            tabletopDeckPane
+        } normal: {
+            normalPlayerContent
+        }
+        .duoHingeObservation(isPartiallyFolded: $isPartiallyFolded)
+        .statusBarHidden(true)
+        .persistentSystemOverlays(.hidden)
+        .onAppear {
+            vm.onPlaybackError = self.onPlaybackError
+            
+            vm.onFinishedPlaylist = {
+                dismiss()
+            }
+            if !UIDevice.isiPhoneDuo {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+                        windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight))
+                    }
+                }
+            }
+            Task { @MainActor in
+                do {
+                    try AVAudioSession.sharedInstance().setCategory(
+                        .playback,
+                        mode: .moviePlayback,
+                        policy: .longFormVideo,
+                        options: []
+                    )
+                    try await AVAudioSession.sharedInstance().setActive(true)
+                } catch {
+                    print("Failed to set audio session on Appear: \(error)")
+                }
+            }
+        }
+        .onDisappear {
+            vm.cleanup()
+            AppDelegate.orientationLock = .portrait
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+                windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+            }
+        }
+        .onChange(of: vm.controlsVisible) { _, visible in
+            if visible && !showEpisodesDrawer { playerController?.resetAutoHideTimer() }
+            else       { playerController?.cancelTimer() }
+        }
+        .onChange(of: vm.isCCEnabled) { _, enabled in
+            vm.handleCCEnabledChanged(enabled)
+        }
+    }
+    
+    // MARK: - iPhone Duo Tabletop Panes
+    
+    private var tabletopVideoPane: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            
+            if let url = vm.streamURL {
+                DragonetPlayer(
+                    player: vm.player,
+                    streamURL: url,
+                    isPiPActive: $vm.isPiPActive,
+                    isCCEnabled: $vm.isCCEnabled,
+                    controlsVisible: $vm.controlsVisible,
+                    onPlaybackError: self.onPlaybackError
+                ) { vc in
+                    vc.updatesNowPlayingInfoCenter = false
+                    playerController = vc
+                }
+                .ignoresSafeArea()
+            }
+            
+            if vm.isBuffering {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    .scaleEffect(2.0)
+                    .allowsHitTesting(false)
+            }
+            
+            if !vm.currentSubtitleText.isEmpty {
+                VStack {
+                    Spacer()
+                    Text(vm.currentSubtitleText)
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color.black.opacity(0.5))
+                        )
+                        .padding(.bottom, 20)
+                        .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 40)
+                .allowsHitTesting(false)
+            }
+            
+            if let skipTarget = vm.currentIntroEndTarget {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button(action: {
+                            vm.seek(to: skipTarget)
+                            playerController?.resetAutoHideTimer()
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "forward.end.fill")
+                                Text("Skip Intro")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .foregroundStyle(.white)
+                            .glassEffect(in: Capsule())
+                        }
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 16)
+                }
+            }
+            
+            if vm.showNextEpisodeCountdown {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Next Episode")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(.white.opacity(0.8))
+                                Text("Playing in \(vm.nextEpisodeCountdown)s")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            
+                            Button {
+                                vm.skipToNextEpisode()
+                            } label: {
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundStyle(.black)
+                                    .frame(width: 30, height: 30)
+                                    .background(Color.white)
+                                    .clipShape(Circle())
+                            }
+                            
+                            Button {
+                                vm.dismissCountdown()
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 26, height: 26)
+                                    .background(Color.white.opacity(0.2))
+                                    .clipShape(Circle())
+                            }
+                        }
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 14)
+                        .glassEffect(in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 16)
+                }
+            }
+        }
+    }
+    
+    private var tabletopDeckPane: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            
+            PlanktonTabletopDeckView(
+                vm: vm,
+                appState: appState,
+                dismiss: { vm.stopAndDismiss() },
+                showEpisodesDrawer: $showEpisodesDrawer,
+                playerController: playerController
+            )
+            
+            if showEpisodesDrawer {
+                episodeSwitchDrawer
+                    .zIndex(4)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+    }
+    
+    private var normalPlayerContent: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             
@@ -1113,14 +1311,22 @@ struct PlanktonPlayerView: View {
                     vc.updatesNowPlayingInfoCenter = false
                     
                     vc.onTap = {
+                        if showEpisodesDrawer {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                showEpisodesDrawer = false
+                            }
+                            return
+                        }
                         withAnimation(.easeOut(duration: 0.2)) { vm.controlsVisible.toggle() }
                         if vm.controlsVisible { vc.resetAutoHideTimer() }
                     }
                     vc.onAutoHide = {
-                        withAnimation(.easeOut(duration: 0.4)) { vm.controlsVisible = false }
+                        if !showEpisodesDrawer {
+                            withAnimation(.easeOut(duration: 0.4)) { vm.controlsVisible = false }
+                        }
                     }
                     playerController = vc
-                    if vm.controlsVisible { vc.resetAutoHideTimer() }
+                    if vm.controlsVisible && !showEpisodesDrawer { vc.resetAutoHideTimer() }
                 }
                 .ignoresSafeArea()
             }
@@ -1133,7 +1339,7 @@ struct PlanktonPlayerView: View {
                     .allowsHitTesting(false)
             }
             
-            // ── 3. Custom Subtitles Overlay (Restored for Direct Play Sync) ──
+            // ── 3. Custom Subtitles Overlay ──
             if !vm.currentSubtitleText.isEmpty {
                 VStack {
                     Spacer()
@@ -1147,77 +1353,47 @@ struct PlanktonPlayerView: View {
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
                                 .fill(Color.black.opacity(0.4))
                         )
-                        .padding(.bottom, vm.controlsVisible ? 85 : 44) // Perfect padding
+                        .padding(.bottom, vm.controlsVisible ? 85 : 44)
                         .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
-                        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: vm.controlsVisible)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 80)
                 .allowsHitTesting(false)
             }
             
-            // ── 4. Independent "Skip Intro" Button ──
-            if let skipTarget = vm.currentIntroEndTarget {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        Button(action: {
-                            vm.seek(to: skipTarget)
-                            playerController?.resetAutoHideTimer()
-                        }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "forward.end.fill")
-                                Text("Skip Intro")
-                                    .font(.subheadline.weight(.semibold))
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .foregroundStyle(.white)
-                            .glassEffect(in: Capsule())
-                        }
-                    }
-                    .padding(.horizontal, 32)
-                    .padding(.bottom, vm.controlsVisible ? 85 : 50)
-                    .safeAreaPadding(.horizontal)
-                }
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: vm.controlsVisible)
-            }
-            
-            // ── 4b. Independent "Next Episode" Countdown ──
+            // ── 4. Next Episode Auto-play Countdown Floating Pill ──
             if vm.showNextEpisodeCountdown {
                 VStack {
                     Spacer()
                     HStack {
                         Spacer()
-                        HStack(spacing: 16) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Next Episode")
-                                    .font(.caption.weight(.bold))
+                        HStack(spacing: 12) {
+                            Button {
+                                vm.dismissCountdown()
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 12, weight: .bold))
                                     .foregroundStyle(.white.opacity(0.8))
-                                Text("Playing in \(vm.nextEpisodeCountdown)s")
-                                    .font(.subheadline.weight(.semibold))
+                                    .frame(width: 28, height: 28)
+                                    .background(Color.white.opacity(0.15))
+                                    .clipShape(Circle())
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Next episode in \(vm.nextEpisodeCountdown)s")
+                                    .font(.system(size: 13, weight: .bold))
                                     .foregroundStyle(.white)
+                                
+                                Text(vm.hasNextEpisode && vm.playlist.indices.contains(vm.currentIndex + 1) ? (vm.playlist[vm.currentIndex + 1].Name) : "Next")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.white.opacity(0.7))
+                                    .lineLimit(1)
                             }
                             
                             Button {
                                 vm.skipToNextEpisode()
                             } label: {
                                 Image(systemName: "play.fill")
-                                    .font(.system(size: 16, weight: .bold))
+                                    .font(.system(size: 12, weight: .bold))
                                     .foregroundStyle(.black)
-                                    .frame(width: 36, height: 36)
-                                    .background(Color.white)
-                                    .clipShape(Circle())
-                            }
-                            
-                            Button {
-                                vm.dismissCountdown()
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 14, weight: .bold))
-                                    .foregroundStyle(.white)
                                     .frame(width: 30, height: 30)
                                     .background(Color.white.opacity(0.2))
                                     .clipShape(Circle())
@@ -1239,51 +1415,190 @@ struct PlanktonPlayerView: View {
             
             // ── 5. Main Controls Overlay ──
             controlsOverlay
-                .opacity(vm.controlsVisible ? 1 : 0)
-                .allowsHitTesting(vm.controlsVisible)
-        }
-        .statusBarHidden(true)
-        .persistentSystemOverlays(.hidden)
-        .onAppear {
-            vm.onPlaybackError = self.onPlaybackError
+                .opacity(vm.controlsVisible && !showEpisodesDrawer ? 1 : 0)
+                .allowsHitTesting(vm.controlsVisible && !showEpisodesDrawer)
             
-            vm.onFinishedPlaylist = {
-                dismiss()
+            // ── 6. Episode Switcher Drawer ──
+            if showEpisodesDrawer {
+                episodeSwitchDrawer
+                    .zIndex(4)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            Task { @MainActor in
-                do {
-                    try AVAudioSession.sharedInstance().setCategory(
-                        .playback,
-                        mode: .moviePlayback,
-                        policy: .longFormVideo,
-                        options: []
-                    )
-                    try await AVAudioSession.sharedInstance().setActive(true)
-                } catch {
-                    print("Failed to set audio session on Appear: \(error)")
+        }
+        .gesture(
+            DragGesture(minimumDistance: 25)
+                .onEnded { value in
+                    if value.translation.height < -40 && vm.playlist.count > 1 {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            showEpisodesDrawer = true
+                        }
+                        playerController?.cancelTimer()
+                    } else if value.translation.height > 40 {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            showEpisodesDrawer = false
+                        }
+                        if vm.controlsVisible {
+                            playerController?.resetAutoHideTimer()
+                        }
+                    }
+                }
+        )
+    }
+
+    // MARK: - Episode Switcher Drawer (Quick Switch Style)
+
+    private var episodeSwitchDrawer: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            
+            VStack(alignment: .center, spacing: 8) {
+                HStack {
+                    Capsule()
+                        .fill(Color.white.opacity(0.4))
+                        .frame(width: 36, height: 4)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 8)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        showEpisodesDrawer = false
+                    }
+                }
+                
+                Text(vm.isEpisode ? "Episodes" : "Playlist")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 12) {
+                            ForEach(Array(vm.playlist.enumerated()), id: \.element.Id) { index, item in
+                                let isCurrent = index == vm.currentIndex
+                                let s = item.ParentIndexNumber.map { String(format: "S%02d", $0) } ?? ""
+                                let e = item.IndexNumber.map { String(format: "E%02d", $0) } ?? ""
+                                let se = [s, e].filter { !$0.isEmpty }.joined()
+                                let targetImageId = item.ImageTags?["Primary"] != nil ? item.Id : item.effectiveImageItemId
+                                
+                                Button {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        showEpisodesDrawer = false
+                                    }
+                                    if index != vm.currentIndex {
+                                        vm.currentIndex = index
+                                        vm.loadItem(at: index)
+                                    }
+                                } label: {
+                                    ZStack {
+                                        let server = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
+                                        let imageURLString = "\(server)/Items/\(targetImageId)/Images/Primary?api_key=\(appState.accessToken)&maxWidth=500&quality=80"
+                                        let imageURL = URL(string: imageURLString)
+                                        
+                                        CachedAsyncImage(url: imageURL) { phase in
+                                            switch phase {
+                                            case .success(let img):
+                                                img
+                                                    .resizable()
+                                                    .aspectRatio(contentMode: .fill)
+                                            default:
+                                                Color.white.opacity(0.08)
+                                            }
+                                        }
+                                        .frame(width: 150, height: 84)
+                                        .clipped()
+                                        
+                                        LinearGradient(
+                                            colors: [.clear, Color.black.opacity(0.85)],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                        
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            HStack {
+                                                if !se.isEmpty {
+                                                    Text(se)
+                                                        .font(.system(size: 10, weight: .bold))
+                                                        .foregroundStyle(.white)
+                                                        .padding(.horizontal, 5)
+                                                        .padding(.vertical, 2)
+                                                        .background(Color.black.opacity(0.6))
+                                                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                                                }
+                                                Spacer()
+                                                if item.UserData?.Played == true {
+                                                    Image(systemName: "checkmark.circle.fill")
+                                                        .font(.system(size: 12))
+                                                        .foregroundStyle(Color.green)
+                                                }
+                                            }
+                                            
+                                            Spacer()
+                                            
+                                            Text(item.Name)
+                                                .font(.system(size: 11, weight: .semibold))
+                                                .foregroundStyle(.white)
+                                                .lineLimit(1)
+                                            
+                                            if let playedTicks = item.UserData?.PlaybackPositionTicks,
+                                               let totalTicks = item.RunTimeTicks,
+                                               totalTicks > 0,
+                                               playedTicks > 0 {
+                                                let progress = min(max(Double(playedTicks) / Double(totalTicks), 0.0), 1.0)
+                                                GeometryReader { g in
+                                                    ZStack(alignment: .leading) {
+                                                        Capsule().fill(Color.white.opacity(0.3))
+                                                        Capsule().fill(Color.blue).frame(width: g.size.width * CGFloat(progress))
+                                                    }
+                                                }
+                                                .frame(height: 3)
+                                            }
+                                        }
+                                        .padding(6)
+                                    }
+                                    .frame(width: 150, height: 84)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .stroke(isCurrent ? Color.accentColor : Color.white.opacity(0.18), lineWidth: isCurrent ? 2.5 : 1)
+                                    )
+                                    .shadow(color: isCurrent ? Color.accentColor.opacity(0.35) : Color.black.opacity(0.3), radius: 6)
+                                }
+                                .buttonStyle(.plain)
+                                .id(item.Id)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 2)
+                    }
+                    .frame(height: 90)
+                    .onAppear {
+                        if vm.playlist.indices.contains(vm.currentIndex) {
+                            let curId = vm.playlist[vm.currentIndex].Id
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                proxy.scrollTo(curId, anchor: .center)
+                            }
+                        }
+                    }
+                    .onChange(of: showEpisodesDrawer) { _, isShown in
+                        if isShown, vm.playlist.indices.contains(vm.currentIndex) {
+                            let curId = vm.playlist[vm.currentIndex].Id
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                proxy.scrollTo(curId, anchor: .center)
+                            }
+                        }
+                    }
                 }
             }
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
-                    windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight))
-                }
-            }
+            .padding(.horizontal, 14)
+            .padding(.top, 4)
+            .padding(.bottom, 12)
+            .glassEffect(in: .rect(cornerRadius: 16.0))
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
         }
-        .onDisappear {
-            vm.cleanup()
-            AppDelegate.orientationLock = .portrait
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
-                windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
-            }
-        }
-        .onChange(of: vm.controlsVisible) { _, visible in
-            if visible { playerController?.resetAutoHideTimer() }
-            else       { playerController?.cancelTimer() }
-        }
-        .onChange(of: vm.isCCEnabled) { _, enabled in
-            vm.handleCCEnabledChanged(enabled)
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .ignoresSafeArea()
     }
     
     // MARK: - Custom VOD Overlay

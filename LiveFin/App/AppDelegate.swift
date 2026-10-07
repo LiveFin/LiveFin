@@ -17,6 +17,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             DispatchQueue.main.async {
                 guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
                 
+                // Ensure primary window background is black so foldable seams and margins never show white lines,
+                // but never touch system overlay windows (such as UITextEffectsWindow).
+                if let keyWindow = windowScene.windows.first(where: { $0.isKeyWindow && type(of: $0) == UIWindow.self }) ?? windowScene.windows.first(where: { type(of: $0) == UIWindow.self }) {
+                    keyWindow.backgroundColor = .black
+                }
+                
                 // 1. Force the root view controller to re-evaluate supported orientations.
                 // This makes iOS immediately call `supportedInterfaceOrientationsFor` below.
                 windowScene.windows.first?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()

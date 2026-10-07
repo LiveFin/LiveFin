@@ -431,7 +431,7 @@ struct ProgramCard: View {
                     fallbackImage
                 }
                 
-                if isRecording, let progress = progressRatio {
+                if isActuallyRecording, let progress = progressRatio {
                     // Currently airing and being recorded - show the live progress bar.
                     ZStack(alignment: .leading) {
                         Rectangle()
@@ -447,7 +447,7 @@ struct ProgramCard: View {
                     // Scheduled but not yet airing - show a recording indicator instead of a bar.
                     Image(systemName: "record.circle")
                         .font(recordingIconFont)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(isActuallyRecording ? .red : .secondary)
                         .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 1)
                         .padding(recordingIconPadding)
                 } else if let progress = progressRatio, progress > 0, progress < 1 {
@@ -635,6 +635,21 @@ struct ProgramCard: View {
 
     private var isRecording: Bool {
         return program.timerId != nil || program.seriesTimerId != nil
+    }
+
+    private var isSeriesNewOnly: Bool {
+        guard let sid = program.seriesTimerId else { return false }
+        return appState.seriesTimerRecordNewOnly[sid] ?? false
+    }
+
+    private var isSkippedBySeriesRule: Bool {
+        guard program.timerId == nil, program.seriesTimerId != nil else { return false }
+        return isSeriesNewOnly && !program.isNewEpisode
+    }
+
+    private var isActuallyRecording: Bool {
+        guard isRecording else { return false }
+        return !isSkippedBySeriesRule
     }
 
     private var recordingIconFont: Font {

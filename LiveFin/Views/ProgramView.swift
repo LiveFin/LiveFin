@@ -11,7 +11,7 @@ struct UpcomingRecordingIcon: View {
         if vm.isRecordingScheduled {
             Image(systemName: "record.circle.fill")
                 .font(.headline)
-                .foregroundColor(.red)
+                .foregroundColor(vm.isSkippedBySeriesRule ? .secondary : .red)
                 .padding(.trailing, 8)
         }
     }
@@ -34,6 +34,14 @@ struct ProgramView: View {
     // Recording States
     @StateObject private var recordingViewModel: ProgramRecordingViewModel
     @State private var showRecordingSheet = false
+
+    // Sports Stats Engine States (Temporarily removed, saving for 2.4.1)
+    /*
+    @State private var detectedSportsQuery: MatchQuery?
+    @State private var liveSportsScore: LiveGameScore?
+    @State private var isPollingSports: Bool = false
+    @State private var sportsPollTask: Task<Void, Never>?
+    */
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass: UserInterfaceSizeClass?
     #if os(iOS)
@@ -98,6 +106,7 @@ struct ProgramView: View {
                             
                             VStack(alignment: .leading, spacing: 14) {
                                 titleSection
+                                // sportsScoreCardSection (Temporarily removed, saving for 2.4.1)
                                 ratingRow
                                 channelRow
                                 actionButtons
@@ -170,6 +179,7 @@ struct ProgramView: View {
         .onAppear {
             viewModel.onAppear()
             recordingViewModel.checkPendingNotifications()
+            // startSportsTracking() (Temporarily removed, saving for 2.4.1)
             
             #if os(iOS)
             // Handle if the view was just opened via deep link
@@ -181,8 +191,12 @@ struct ProgramView: View {
             }
             #endif
         }
+        .onDisappear {
+            // stopSportsTracking() (Temporarily removed, saving for 2.4.1)
+        }
         .task(id: program.id) {
             await viewModel.load()
+            // startSportsTracking() (Temporarily removed, saving for 2.4.1)
         }
     }
 
@@ -190,6 +204,7 @@ struct ProgramView: View {
         VStack(alignment: .leading, spacing: 20) {
             imageSection
             titleSection
+            // sportsScoreCardSection (Temporarily removed, saving for 2.4.1)
             ratingRow
             channelRow
             actionButtons
@@ -202,7 +217,207 @@ struct ProgramView: View {
         .padding(.horizontal)
     }
 
+    // MARK: - Sports Tracking Engine (Temporarily removed, saving for 2.4.1)
+    /*
+    // MARK: - Sports Tracking Engine
+
+    private func startSportsTracking() {
+        sportsPollTask?.cancel()
+
+        let channelName = viewModel.channelName
+        let query = SportsMatchEngine.shared.parseQuery(
+            title: program.name,
+            subtitle: program.episodeTitle ?? program.overview,
+            channelName: channelName,
+            genres: program.genres,
+            startDate: program.startDate
+        )
+
+        guard let validQuery = query else {
+            self.detectedSportsQuery = nil
+            self.liveSportsScore = nil
+            return
+        }
+
+        self.detectedSportsQuery = validQuery
+
+        sportsPollTask = Task { @MainActor in
+            self.isPollingSports = true
+            while !Task.isCancelled {
+                let score = await SportsDataManager.shared.resolveLiveScore(for: validQuery)
+                guard !Task.isCancelled else { return }
+
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    self.liveSportsScore = score
+                    self.isPollingSports = false
+                }
+
+                let interval: UInt64 = (score?.isLive == true) ? 15 : 45
+                try? await Task.sleep(nanoseconds: interval * 1_000_000_000)
+            }
+        }
+    }
+
+    private func stopSportsTracking() {
+        sportsPollTask?.cancel()
+        sportsPollTask = nil
+    }
+
     // MARK: - Sections
+
+    @ViewBuilder private var sportsScoreCardSection: some View {
+        if let score = liveSportsScore {
+            VStack(spacing: 14) {
+                if score.isLive || score.isFinal || (!score.isPreGame && !score.statusDisplay.isEmpty) {
+                    HStack {
+                        if score.isLive {
+                            HStack(spacing: 5) {
+                                Circle().fill(Color.red).frame(width: 8, height: 8)
+                                Text("LIVE")
+                                    .font(.caption2.weight(.black))
+                                    .foregroundColor(.red)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Color.red.opacity(0.15)))
+                        } else if score.isFinal {
+                            Text("FINAL")
+                                .font(.caption2.weight(.black))
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(Color.gray.opacity(0.15)))
+                        }
+
+                        Spacer()
+
+                        if !score.isPreGame && !score.isFinal {
+                            Text(score.statusDisplay)
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+
+                HStack(alignment: .center) {
+                    teamColumn(
+                        logoURL: score.awayLogoURL,
+                        rank: score.awayRank,
+                        name: score.awayTeamName,
+                        record: score.awayRecord
+                    )
+
+                    VStack(spacing: 2) {
+                        if score.isPreGame {
+                            Text("VS")
+                                .font(.title3.weight(.black))
+                                .foregroundColor(.secondary)
+                            if let time = score.startTimeDisplay {
+                                Text(time)
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundColor(.secondary)
+                            }
+                        } else {
+                            HStack(spacing: 8) {
+                                Text("\(score.awayScore)")
+                                    .font(.system(size: 28, weight: .black, design: .rounded))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.5)
+                                Text("-")
+                                    .font(.headline.bold())
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                                Text("\(score.homeScore)")
+                                    .font(.system(size: 28, weight: .black, design: .rounded))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.5)
+                            }
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(minWidth: 80)
+
+                    teamColumn(
+                        logoURL: score.homeLogoURL,
+                        rank: score.homeRank,
+                        name: score.homeTeamName,
+                        record: score.homeRecord
+                    )
+                }
+
+                if let odds = score.oddsSummary ?? score.overUnder {
+                    HStack {
+                        Image(systemName: "chart.line.uptrend.xyaxis")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text(odds)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                    .padding(.top, 2)
+                }
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color.platformSecondaryBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+        } else if isPollingSports {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .scaleEffect(0.8)
+                Text("Searching for live match scores...")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.platformSecondaryBackground))
+        }
+    }
+
+    @ViewBuilder private func teamColumn(logoURL: URL?, rank: Int?, name: String, record: String?) -> some View {
+        VStack(spacing: 4) {
+            if let logoURL = logoURL {
+                AsyncImage(url: logoURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().aspectRatio(contentMode: .fit).frame(width: 36, height: 36)
+                    default:
+                        Circle().fill(Color.platformTertiaryFill).frame(width: 36, height: 36)
+                    }
+                }
+            } else {
+                Circle().fill(Color.platformTertiaryFill).frame(width: 36, height: 36)
+            }
+
+            if let rank = rank {
+                Text("#\(rank)")
+                    .font(.system(size: 10, weight: .black))
+                    .foregroundColor(.yellow)
+            }
+
+            Text(name)
+                .font(.caption.weight(.bold))
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+
+            if let record = record {
+                Text(record)
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    */
 
     @ViewBuilder private var imageSection: some View {
         if program.isLikelyMovie && !viewModel.effectivePrimaryImageIsLandscape {
@@ -349,8 +564,14 @@ struct ProgramView: View {
                     Image(systemName: recordingViewModel.isRecordingScheduled ? "record.circle.fill" : "record.circle")
                         .font(.headline)
                         .padding(12)
-                        .foregroundColor(recordingViewModel.isRecordingScheduled ? .red : .primary)
-                        .background(recordingViewModel.isRecordingScheduled ? Color.red.opacity(0.4) : Color.gray.opacity(0.2))
+                        .foregroundColor(
+                            !recordingViewModel.isRecordingScheduled ? .primary :
+                            (recordingViewModel.isSkippedBySeriesRule ? .secondary : .red)
+                        )
+                        .background(
+                            !recordingViewModel.isRecordingScheduled ? Color.gray.opacity(0.2) :
+                            (recordingViewModel.isSkippedBySeriesRule ? Color.gray.opacity(0.3) : Color.red.opacity(0.4))
+                        )
                         .glassEffect(in: Circle())
                 }
             }

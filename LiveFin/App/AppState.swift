@@ -103,6 +103,7 @@ final class AppState: ObservableObject {
 @Published var currentProgramStartDate: Date? = nil
 @Published var currentProgramEndDate: Date? = nil
 @Published var channelNames: [String: String] = [:]
+@Published var seriesTimerRecordNewOnly: [String: Bool] = [:]
 
 private var epgTimer: Timer?
 
@@ -215,6 +216,8 @@ WatchSyncManager.shared.sendLogin(serverURL: serverURL, accessToken: accessToken
 Task {
 await self.refreshUserProfileInfoAndImage()
 await self.fetchUserPermissions()
+await self.fetchSeriesTimers()
+await self.fetchAllChannelNames()
 }
 self.reportFullClientCapabilities()
 }
@@ -234,6 +237,7 @@ private func resetState() {
     self.loginError = nil
     self.userPrimaryImageTag = nil
     self.userProfileImage = nil
+    self.seriesTimerRecordNewOnly = [:]
     JellyfinV12Interceptor.authHeader = nil
 
 
@@ -360,6 +364,8 @@ WatchSyncManager.shared.sendLogin(serverURL: server, accessToken: token, apiKey:
 Task {
 await self.refreshUserProfileInfoAndImage()
 await self.fetchUserPermissions()
+await self.fetchSeriesTimers()
+await self.fetchAllChannelNames()
 }
 self.reportFullClientCapabilities()
 }
@@ -408,6 +414,72 @@ func fetchServerName() async {
          print("Failed to fetch server name/version: \(error)")
      }
  }
+
+@MainActor
+func fetchSeriesTimers() async {
+    guard !serverURL.isEmpty else { return }
+    let cleanURL = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
+    do {
+        let sTimers = try await JellyfinTimerCache.shared.getSeriesTimers(baseURL: cleanURL, token: accessToken)
+        var map: [String: Bool] = [:]
+        for st in sTimers {
+            map[st.Id] = st.RecordNewOnly ?? false
+        }
+        self.seriesTimerRecordNewOnly = map
+    } catch {
+        print("AppState: fetchSeriesTimers error: \(error)")
+    }
+}
+
+@MainActor
+func fetchAllChannelNames() async {
+    guard !serverURL.isEmpty else { return }
+    let cleanURL = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
+    guard let url = URL(string: cleanURL)?.appendingPathComponent("LiveTv/Channels") else { return }
+    var req = URLRequest(url: url)
+    if !accessToken.isEmpty { req.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token") }
+    do {
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return }
+        var map: [String: String] = [:]
+        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let items = obj["Items"] as? [[String: Any]] {
+            for it in items {
+                if let id = it["Id"] as? String, let name = it["Name"] as? String {
+                    map[id] = name
+                }
+            }
+        } else if let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            for it in arr {
+                if let id = it["Id"] as? String, let name = it["Name"] as? String {
+                    map[id] = name
+                }
+            }
+        }
+        self.channelNames.merge(map) { _, new in new }
+    } catch { }
+}
+
+@MainActor
+func resolveChannelName(for channelId: String?) async -> String? {
+    guard let cid = channelId, !cid.isEmpty else { return nil }
+    if let cached = channelNames[cid], !cached.isEmpty { return cached }
+    guard !serverURL.isEmpty else { return nil }
+    let cleanURL = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
+    guard let url = URL(string: cleanURL)?.appendingPathComponent("LiveTv/Channels/\(cid)") else { return nil }
+    var req = URLRequest(url: url)
+    if !accessToken.isEmpty { req.setValue(accessToken, forHTTPHeaderField: "X-Emby-Token") }
+    do {
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let name = obj["Name"] as? String, !name.isEmpty {
+            self.channelNames[cid] = name
+            return name
+        }
+    } catch { }
+    return nil
+}
 
 @MainActor
 func logout() {
@@ -547,13 +619,18 @@ func fetchCurrentProgram(channelId: String) async {
     var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)
     comps?.queryItems = [
         URLQueryItem(name: "channelIds", value: channelId),
+        URLQueryItem(name: "channelId", value: channelId),
+        URLQueryItem(name: "minEndDate", value: startStr),
+        URLQueryItem(name: "maxStartDate", value: endStr),
         URLQueryItem(name: "startDate", value: startStr),
         URLQueryItem(name: "endDate", value: endStr),
+        URLQueryItem(name: "Limit", value: "20"),
         URLQueryItem(name: "EnableImages", value: "true"),
         URLQueryItem(name: "EnableUserData", value: "false"),
         URLQueryItem(name: "fields", value: "SeriesName,Overview,ImageTags,ChannelId,ProgramId,Type,IsMovie")
     ]
-    if let uid = user?.id, !uid.isEmpty { comps?.queryItems?.append(URLQueryItem(name: "userId", value: uid)) }
+    let uid = !userID.isEmpty ? userID : (user?.id ?? "")
+    if !uid.isEmpty { comps?.queryItems?.append(URLQueryItem(name: "userId", value: uid)) }
     guard let url = comps?.url else { return }
 
     var request = URLRequest(url: url)
@@ -587,10 +664,7 @@ func fetchCurrentProgram(channelId: String) async {
             let endS = (prog["EndDate"] as? String) ?? (prog["EndDateUtc"] as? String)
             func parse(_ s: String?) -> Date? {
                 guard let s = s else { return nil }
-                if let d = parser.date(from: s) { return d }
-                let fallback = ISO8601DateFormatter()
-                fallback.formatOptions = [.withInternetDateTime]
-                return fallback.date(from: s)
+                return ChannelDetailView.parseFlexibleDate(s)
             }
             guard let startD = parse(startS), let endD = parse(endS) else { continue }
             if startD <= now && now <= endD { selected = prog; break }
@@ -795,15 +869,21 @@ private func fetchAndCacheEPG(for day: Date) async {
     let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(24*3600)
 
     guard let base = buildURL("/LiveTv/Programs") else { return }
+    let startStr = iso.string(from: start)
+    let endStr = iso.string(from: end)
     var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)
     comps?.queryItems = [
-        URLQueryItem(name: "startDate", value: iso.string(from: start)),
-        URLQueryItem(name: "endDate", value: iso.string(from: end)),
+        URLQueryItem(name: "minEndDate", value: startStr),
+        URLQueryItem(name: "maxStartDate", value: endStr),
+        URLQueryItem(name: "startDate", value: startStr),
+        URLQueryItem(name: "endDate", value: endStr),
+        URLQueryItem(name: "Limit", value: "5000"),
         URLQueryItem(name: "EnableImages", value: "false"),
         URLQueryItem(name: "EnableUserData", value: "false"),
         URLQueryItem(name: "fields", value: "Overview,OfficialRating,EpisodeTitle,ParentIndexNumber,IndexNumber,IsRepeat,IsMovie")
     ]
-    if let uid = user?.id, !uid.isEmpty { comps?.queryItems?.append(URLQueryItem(name: "userId", value: uid)) }
+    let uid = !userID.isEmpty ? userID : (user?.id ?? "")
+    if !uid.isEmpty { comps?.queryItems?.append(URLQueryItem(name: "userId", value: uid)) }
     guard let url = comps?.url else { return }
 
     var req = URLRequest(url: url)
@@ -820,9 +900,7 @@ private func fetchAndCacheEPG(for day: Date) async {
         let dec = JSONDecoder()
         dec.dateDecodingStrategy = .custom { d in
             let c = try d.singleValueContainer(); let s = try c.decode(String.self)
-            let f1 = ISO8601DateFormatter(); f1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let dt = f1.date(from: s) { return dt }
-            let f2 = ISO8601DateFormatter(); if let dt2 = f2.date(from: s) { return dt2 }
+            if let dt = ChannelDetailView.parseFlexibleDate(s) { return dt }
             throw DecodingError.dataCorruptedError(in: c, debugDescription: "Cannot parse date: \(s)")
         }
 

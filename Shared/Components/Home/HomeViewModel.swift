@@ -100,8 +100,9 @@ final class HomeViewModel: ObservableObject {
         async let continueWatchingA = fetchContinueWatching(appState: appState)
         async let upNextA           = fetchUpNext(appState: appState)
         async let recentlyAddedA    = fetchRecentlyAdded(appState: appState)
+        async let seriesTimersA: Void = appState.fetchSeriesTimers()
 
-        let (names, channels, onNow, shows, movies, news, sports, kids, continueWatching, upNext, recentlyAdded) = await (namesA, chansA, onNowA, showsA, moviesA, newsA, sportsA, kidsA, continueWatchingA, upNextA, recentlyAddedA)
+        let (names, channels, onNow, shows, movies, news, sports, kids, continueWatching, upNext, recentlyAdded, _) = await (namesA, chansA, onNowA, showsA, moviesA, newsA, sportsA, kidsA, continueWatchingA, upNextA, recentlyAddedA, seriesTimersA)
 
         guard !Task.isCancelled else { if debugLog { print("HomeView.refresh cancelled after fetch") }; return }
         
@@ -204,7 +205,7 @@ final class HomeViewModel: ObservableObject {
             var q: [URLQueryItem] = [
                 URLQueryItem(name: "IsAiring", value: "true"),
                 URLQueryItem(name: "Limit", value: "500"),
-                URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,TimerId,SeriesTimerId,PrimaryImageAspectRatio")
+                URLQueryItem(name: "fields", value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,TimerId,SeriesTimerId,IsRepeat,IsPremiere,IsNew,PrimaryImageAspectRatio")
             ]
             if !appState.userID.isEmpty { q.append(URLQueryItem(name: "userId", value: appState.userID)) }
             comps?.queryItems = q
@@ -252,7 +253,7 @@ final class HomeViewModel: ObservableObject {
                 URLQueryItem(name: "minEndDate",   value: iso.string(from: now)),
                 URLQueryItem(name: "maxStartDate", value: iso.string(from: end)),
                 URLQueryItem(name: "Limit",        value: "500"),
-                URLQueryItem(name: "fields",       value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,TimerId,SeriesTimerId,PrimaryImageAspectRatio")
+                URLQueryItem(name: "fields",       value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,TimerId,SeriesTimerId,IsRepeat,IsPremiere,IsNew,PrimaryImageAspectRatio")
             ]
             filterParam(into: &q)
             if !appState.userID.isEmpty { q.append(URLQueryItem(name: "userId", value: appState.userID)) }
@@ -273,7 +274,7 @@ final class HomeViewModel: ObservableObject {
                     URLQueryItem(name: "minEndDate",   value: iso.string(from: now)),
                     URLQueryItem(name: "maxStartDate", value: iso.string(from: end)),
                     URLQueryItem(name: "Limit",        value: "500"),
-                    URLQueryItem(name: "fields",       value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,TimerId,SeriesTimerId,PrimaryImageAspectRatio")
+                    URLQueryItem(name: "fields",       value: "Overview,OfficialRating,Genres,SeriesName,EpisodeTitle,RunTimeTicks,ParentIndexNumber,IndexNumber,TimerId,SeriesTimerId,IsRepeat,IsPremiere,IsNew,PrimaryImageAspectRatio")
                 ]
                 filterParam(into: &qUtc)
                 if !appState.userID.isEmpty { qUtc.append(URLQueryItem(name: "userId", value: appState.userID)) }

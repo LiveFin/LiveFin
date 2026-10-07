@@ -9,15 +9,19 @@ import SwiftUI
 import AVKit
 
 struct DragonetMultiView: View {
-    @StateObject var multiVM: DragonetMultiViewModel
-    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var multiVM: DragonetMultiViewModel
+    @Environment(\.presentationMode) private var presentationMode
     @EnvironmentObject var appState: AppState
-    
+
     @State private var showChannelPicker = false
     @State private var controlsVisible = true
     @State private var autoHideTask: Task<Void, Never>?
     @State private var showExitConfirmation = false
-    
+
+    private func closeView() {
+        presentationMode.wrappedValue.dismiss()
+    }
+
     var body: some View {
         GeometryReader { geo in
             ZStack {
@@ -68,7 +72,7 @@ struct DragonetMultiView: View {
                                 showExitConfirmation = true
                             } else {
                                 multiVM.selectedStreamToKeep = multiVM.activeStreams.first
-                                dismiss()
+                                closeView()
                             }
                         } label: {
                             Image(systemName: "xmark")
@@ -119,7 +123,7 @@ struct DragonetMultiView: View {
                 let stream = multiVM.activeStreams[index]
                 Button(stream.channel?.name ?? stream.program?.name ?? "Stream \(index + 1)") {
                     multiVM.selectedStreamToKeep = stream
-                    dismiss()
+                    closeView()
                 }
             }
             Button("Cancel", role: .cancel) { }
@@ -129,7 +133,7 @@ struct DragonetMultiView: View {
         .onChange(of: multiVM.shouldDismiss) { should in
             if should {
                 multiVM.selectedStreamToKeep = multiVM.activeStreams.first
-                dismiss()
+                closeView()
             }
         }
         .onAppear {
@@ -142,8 +146,7 @@ struct DragonetMultiView: View {
             if !isPresented { resetAutoHideTimer() }
         }
     }
-    
-    // Shows the controls, then schedules them to fade out again after a few seconds of inactivity.
+
     private func resetAutoHideTimer() {
         autoHideTask?.cancel()
         
@@ -157,8 +160,7 @@ struct DragonetMultiView: View {
             controlsVisible = false
         }
     }
-    
-    // Centers rows that have fewer active items perfectly within the geometry space
+
     @ViewBuilder
     private func gridRow(start: Int, end: Int, cellWidth: CGFloat, cellHeight: CGFloat) -> some View {
         HStack(spacing: 2) {
@@ -169,7 +171,7 @@ struct DragonetMultiView: View {
         }
         .frame(maxWidth: .infinity, alignment: .center)
     }
-    
+
     @ViewBuilder
     private func streamView(for index: Int) -> some View {
         if multiVM.activeStreams.indices.contains(index) {
@@ -205,6 +207,67 @@ struct DragonetMultiView: View {
                             resetAutoHideTimer()
                         }
                     }
+                
+                // Top-Left Live Sports Score Badge with Team Logos (Temporarily removed, saving for 2.4.1)
+                /*
+                if let score = vm.liveGameScore {
+                    HStack(spacing: 6) {
+                        // Away Team Logo & Rank
+                        if let logo = score.awayLogoURL {
+                            AsyncImage(url: logo) { phase in
+                                if let img = phase.image {
+                                    img.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14)
+                                }
+                            }
+                        }
+                        if let rank = score.awayRank {
+                            Text("#\(rank)")
+                                .font(.system(size: 9, weight: .black))
+                                .foregroundColor(.yellow.opacity(0.95))
+                        }
+                        Text("\(score.awayTeamAbbr) \(score.awayScore)")
+                            .font(.caption2.bold())
+                            .foregroundColor(.white)
+                        
+                        Text("-")
+                            .font(.caption2.bold())
+                            .foregroundColor(.white.opacity(0.5))
+                        
+                        Text("\(score.homeScore)")
+                            .font(.caption2.bold())
+                            .foregroundColor(.white)
+                        if let rank = score.homeRank {
+                            Text("#\(rank)")
+                                .font(.system(size: 9, weight: .black))
+                                .foregroundColor(.yellow.opacity(0.95))
+                        }
+                        if let logo = score.homeLogoURL {
+                            AsyncImage(url: logo) { phase in
+                                if let img = phase.image {
+                                    img.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14)
+                                }
+                            }
+                        }
+                        Text(score.homeTeamAbbr)
+                            .font(.caption2.bold())
+                            .foregroundColor(.white)
+                        
+                        Text("•")
+                            .font(.caption2)
+                            .foregroundColor(.white.opacity(0.6))
+                        
+                        Text(score.statusDisplay)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundColor(score.isLive ? .red : .white.opacity(0.85))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.black.opacity(0.78)))
+                    .padding(8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .allowsHitTesting(false)
+                }
+                */
                 
                 // Quadrant Remove Button (Only for > 2 streams)
                 if multiVM.activeStreams.count > 2 {
