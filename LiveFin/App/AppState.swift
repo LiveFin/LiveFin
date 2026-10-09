@@ -125,11 +125,12 @@ init() {
     URLProtocol.registerClass(JellyfinV12Interceptor.self)
     
     // Prime the Watch connectivity instantly on boot
-
-
 #if canImport(WatchConnectivity)
-_ = WatchSyncManager.shared
+    _ = WatchSyncManager.shared
 #endif
+    Task { @MainActor in
+        self.restoreLogin()
+    }
 }
 
 // MARK: - Modern Jellyfin Authorization Header
@@ -982,6 +983,7 @@ final class WatchSyncManager: NSObject, WCSessionDelegate {
 static let shared = WatchSyncManager()
 
 private var pendingContext: [String: Any]?
+private var currentContext: [String: Any]?
 
 private override init() {
     super.init()
@@ -1004,12 +1006,36 @@ func sendLogin(serverURL: String, accessToken: String, apiKey: String, userId: S
         "userId": userId,
         "loggedOut": false
     ]
+    currentContext = ctx
     updateContextOrQueue(ctx)
 }
 
 func sendLogout() {
     guard WCSession.isSupported() else { return }
+    currentContext = ["loggedOut": true]
     updateContextOrQueue(["loggedOut": true])
+}
+
+private func latestContextFromStorage() -> [String: Any] {
+    let prefix = UIDevice.current.identifierForVendor?.uuidString ?? ""
+    var server = KeychainHelper.load(key: "\(prefix)_server") ?? ""
+    var token = KeychainHelper.load(key: "\(prefix)_token") ?? ""
+    var userId = KeychainHelper.load(key: "\(prefix)_userId") ?? ""
+    var apiKey = KeychainHelper.load(key: "\(prefix)_apiKey") ?? token
+    if server.isEmpty { server = KeychainHelper.load(key: "serverURL") ?? "" }
+    if token.isEmpty { token = KeychainHelper.load(key: "accessToken") ?? "" }
+    if apiKey.isEmpty { apiKey = KeychainHelper.load(key: "apiKey") ?? token }
+    if userId.isEmpty { userId = KeychainHelper.load(key: "userId") ?? "" }
+    if !server.isEmpty && !token.isEmpty {
+        return [
+            "serverURL": server,
+            "accessToken": token,
+            "apiKey": apiKey,
+            "userId": userId,
+            "loggedOut": false
+        ]
+    }
+    return ["loggedOut": true]
 }
 
 private func updateContextOrQueue(_ ctx: [String: Any]) {
@@ -1020,6 +1046,9 @@ private func updateContextOrQueue(_ ctx: [String: Any]) {
         } catch {
             print("WatchSyncManager: updateApplicationContext error: \(error)")
         }
+        if session.isReachable {
+            session.sendMessage(ctx, replyHandler: nil, errorHandler: nil)
+        }
     } else {
         pendingContext = ctx
         if session.activationState == .notActivated {
@@ -1029,7 +1058,8 @@ private func updateContextOrQueue(_ ctx: [String: Any]) {
 }
 
 func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
-    if activationState == .activated, let ctx = pendingContext {
+    if activationState == .activated {
+        let ctx = pendingContext ?? currentContext ?? latestContextFromStorage()
         do {
             try session.updateApplicationContext(ctx)
             self.pendingContext = nil
@@ -1039,6 +1069,19 @@ func session(_ session: WCSession, activationDidCompleteWith activationState: WC
     }
 }
 
+func session(_ session: WCSession, didReceiveMessage message: [String : Any], replyHandler: @escaping ([String : Any]) -> Void) {
+    if let current = currentContext {
+        replyHandler(current)
+    } else {
+        let storageCtx = latestContextFromStorage()
+        self.currentContext = storageCtx
+        replyHandler(storageCtx)
+    }
+}
+
+func session(_ session: WCSession, didReceiveMessage message: [String : Any]) {
+    // Process any direct messages
+}
 
 #if os(iOS)
 func sessionDidBecomeInactive(_ session: WCSession) {}
