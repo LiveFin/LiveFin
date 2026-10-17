@@ -88,7 +88,7 @@ struct ProgramBlockView: View, Equatable {
     var body: some View {
         let jf = buildJFProgram(from: b.item, channel: channel, clampedStart: b.s, clampedEnd: b.e)
 
-        NavigationLink(destination: ProgramView(program: jf, appState: appState).environmentObject(appState)) {
+        NavigationLink(destination: destination(for: jf)) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .top) {
                     Text(b.item.name ?? "Untitled")
@@ -119,6 +119,15 @@ struct ProgramBlockView: View, Equatable {
         .buttonStyle(.plain)
         .offset(x: b.x, y: 4)
         .id(b.id)
+    }
+
+    @ViewBuilder
+    private func destination(for jf: JFProgram) -> some View {
+        #if os(tvOS)
+        TVProgramView(program: jf, appState: appState).environmentObject(appState)
+        #else
+        ProgramView(program: jf, appState: appState).environmentObject(appState)
+        #endif
     }
 
     private func buildJFProgram(from item: BaseItemDto, channel: LiveTvChannelDto, clampedStart s: Date, clampedEnd e: Date) -> JFProgram {

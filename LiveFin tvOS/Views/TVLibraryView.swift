@@ -304,7 +304,11 @@ struct TVMediaItemCardImage: View {
                let url = URL(string: "\(base)/Items/\(imageItemId)/Images/\(type)?tag=\(tag)&maxWidth=\(Int(width))") {
                 AsyncImage(url: url) { phase in
                     if let image = phase.image {
-                        image.resizable().aspectRatio(contentMode: .fill)
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: width, height: height)
+                            .clipped()
                     } else if phase.error != nil {
                         fallbackIcon
                     } else {

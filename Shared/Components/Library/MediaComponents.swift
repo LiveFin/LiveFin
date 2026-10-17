@@ -991,35 +991,41 @@ struct LibraryPosterCard: View {
     
     var body: some View {
         let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
+        let imageItemId = item.effectiveImageItemId
+        let imageTag = item.effectivePrimaryImageTag
         
         VStack(alignment: .leading, spacing: 8) {
-            ZStack {
-                Color.libFinSecondaryBackground
-                
-                if let tag = item.primaryImageTag,
-                   let url = URL(string: "\(base)/Items/\(item.Id)/Images/Primary?tag=\(tag)&maxWidth=400") {
-                    CachedAsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        case .failure:
+            Color.libFinSecondaryBackground
+                .aspectRatio(2/3, contentMode: .fit)
+                .overlay(
+                    GeometryReader { geo in
+                        if let tag = imageTag,
+                           let url = URL(string: "\(base)/Items/\(imageItemId)/Images/Primary?tag=\(tag)&maxWidth=400") {
+                            CachedAsyncImage(url: url) { phase in
+                                switch phase {
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(width: geo.size.width, height: geo.size.height)
+                                        .clipped()
+                                case .failure:
+                                    fallbackPlaceholder
+                                case .empty:
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                        .frame(width: geo.size.width, height: geo.size.height)
+                                @unknown default:
+                                    EmptyView()
+                                }
+                            }
+                        } else {
                             fallbackPlaceholder
-                        case .empty:
-                            ProgressView()
-                                .scaleEffect(0.8)
-                        @unknown default:
-                            EmptyView()
                         }
                     }
-                } else {
-                    fallbackPlaceholder
-                }
-            }
-            .aspectRatio(2/3, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .shadow(color: Color.black.opacity(0.12), radius: 4, x: 0, y: 2)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .shadow(color: Color.black.opacity(0.12), radius: 4, x: 0, y: 2)
             
             Text(item.Name)
                 .font(.system(size: 13, weight: .semibold))
@@ -1035,7 +1041,7 @@ struct LibraryPosterCard: View {
     @ViewBuilder
     private var fallbackPlaceholder: some View {
         VStack(spacing: 8) {
-            Image(systemName: "film")
+            Image(systemName: item.Type == "Series" ? "tv" : "film")
                 .font(.system(size: 24))
                 .foregroundColor(.secondary)
             Text(item.Name)
@@ -1057,13 +1063,16 @@ struct RelatedItemCard: View {
     let baseServerURL: String
     
     var body: some View {
+        let imageItemId = item.effectiveImageItemId
+        let imageTag = item.effectivePrimaryImageTag
+        
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .center) {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.libFinSecondaryBackground)
                 
-                if let tag = item.primaryImageTag,
-                   let url = URL(string: "\(baseServerURL)/Items/\(item.Id)/Images/Primary?tag=\(tag)&maxWidth=300") {
+                if let tag = imageTag,
+                   let url = URL(string: "\(baseServerURL)/Items/\(imageItemId)/Images/Primary?tag=\(tag)&maxWidth=300") {
                     CachedAsyncImage(url: url) { phase in
                         if let image = phase.image {
                             image

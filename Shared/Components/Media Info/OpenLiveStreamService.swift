@@ -53,14 +53,118 @@ struct JFOpenLiveStreamService {
         )
     }
 
-    // MARK: - Live TV Specific Safeguards
+    // MARK: - Live TV Specific Safeguards & AVPlayer Compatibility
     
-    /// iOS absolutely cannot direct-play raw .ts streams from tuners. We must intercept these.
+    /// iOS and tvOS AVPlayer cannot direct-play raw .ts streams from tuners or non-Apple containers.
     private static func needsTranscodingForDirectPath(_ path: String?) -> Bool {
         guard let p = path?.lowercased() else { return false }
-        if p.hasSuffix(".ts") || p.hasSuffix("/stream.ts") { return true }
-        if p.contains("/livetv/") || p.contains("livestreamfiles") { return true }
+        if p.hasSuffix(".ts") || p.hasSuffix("/stream.ts") || p.contains("/livetv/") || p.contains("livestreamfiles") {
+            return true
+        }
+        if p.hasSuffix(".mkv") || p.hasSuffix(".webm") || p.hasSuffix(".avi") || p.hasSuffix(".wmv") ||
+           p.hasSuffix(".flv") || p.hasSuffix(".mpg") || p.hasSuffix(".mpeg") || p.hasSuffix(".m2ts") ||
+           p.hasSuffix(".vob") {
+            return true
+        }
         return false
+    }
+
+    /// Evaluates whether a media source is fully compatible with AVPlayer Direct Play on iOS 26+ / tvOS.
+    /// AVPlayer natively direct-plays progressive H.264 (8-bit), HEVC (8/10-bit), and AV1 (8/10-bit)
+    /// within standard containers (mp4, m4v, mov, m3u8).
+    /// All other codecs supported by Jellyfin (MPEG2, VC-1, VP9, VP9 10-bit, Hi10P H.264) as well as
+    /// interlaced video and raw TS/tuner containers CANNOT be direct-played by AVPlayer and must be transcoded.
+    private static func isAVPlayerDirectPlayable(mediaSource: MediaSourceInfo?, path: String?, debug: Bool = false) -> Bool {
+        guard let source = mediaSource else { return false }
+        
+        // 1. Container Validation
+        let validContainers = Set(["mp4", "m4v", "mov", "m3u8"])
+        if let container = source.container?.lowercased(), !validContainers.contains(container) {
+            if debug { print("[ResolveStream] Incompatible container for AVPlayer Direct Play: \(container)") }
+            return false
+        }
+        
+        // 2. Direct Path Validation (Reject raw TS streams, tuner endpoints, and non-Apple containers)
+        if needsTranscodingForDirectPath(path) {
+            if debug { print("[ResolveStream] Incompatible direct path for AVPlayer: \(path ?? "")") }
+            return false
+        }
+        
+        // 3. Video Streams Validation
+        let videoStreams = source.mediaStreams?.filter { $0.type == .video || $0.type?.rawValue.lowercased() == "video" } ?? []
+        for vStream in videoStreams {
+            // Interlaced video: AVPlayer has no native deinterlacing engine. Must be deinterlaced via Jellyfin transcode.
+            if vStream.isInterlaced == true {
+                if debug { print("[ResolveStream] Video stream is interlaced; transcoding required for deinterlacing.") }
+                return false
+            }
+            
+            guard let codec = vStream.codec?.lowercased() else { continue }
+            let bitDepth = vStream.bitDepth ?? 8
+            
+            switch codec {
+            case "h264", "avc", "avc1":
+                // AVPlayer only supports 8-bit H.264. Hi10P (10-bit H.264) causes decode failure.
+                if bitDepth > 8 {
+                    if debug { print("[ResolveStream] H.264 10-bit (Hi10P) not supported by AVPlayer; transcoding required.") }
+                    return false
+                }
+                
+            case "hevc", "h265", "hvc1", "hev1":
+                // HEVC 8-bit and HEVC 10-bit are fully supported by Apple Silicon hardware on iOS 26+.
+                if bitDepth > 10 {
+                    if debug { print("[ResolveStream] HEVC >10-bit not supported by AVPlayer; transcoding required.") }
+                    return false
+                }
+                
+            case "av1", "av01":
+                // AV1 hardware decode support check (A17 Pro / M3+)
+                guard JFPlaybackInfoService.isAV1HardwareSupported else {
+                    if debug { print("[ResolveStream] AV1 hardware decode not supported on this device; transcoding required.") }
+                    return false
+                }
+                if bitDepth > 10 {
+                    if debug { print("[ResolveStream] AV1 >10-bit not supported by AVPlayer; transcoding required.") }
+                    return false
+                }
+                
+            case "mpeg2video", "mpeg2", "mp2v", "mpeg":
+                // MPEG2 is NOT supported by AVPlayer (common in ATSC broadcast TV). Must transcode.
+                if debug { print("[ResolveStream] MPEG2 video is not supported by AVPlayer; transcoding required.") }
+                return false
+                
+            case "vc1", "wmv3", "wvc1":
+                // VC-1 is NOT supported by AVPlayer. Must transcode.
+                if debug { print("[ResolveStream] VC-1 video is not supported by AVPlayer; transcoding required.") }
+                return false
+                
+            case "vp9", "vp09":
+                // VP9 and VP9 10-bit are NOT supported by AVPlayer URL streaming. Must transcode.
+                if debug { print("[ResolveStream] VP9 / VP9 10-bit video is not supported by AVPlayer; transcoding required.") }
+                return false
+                
+            default:
+                if debug { print("[ResolveStream] Unknown/unsupported video codec for AVPlayer: \(codec)") }
+                return false
+            }
+        }
+        
+        // 4. Audio Streams Validation
+        #if os(tvOS)
+        let supportedAudio = Set(["aac", "ac3", "eac3", "truehd", "dts", "dca", "mp3", "alac", "flac"])
+        #else
+        let supportedAudio = Set(["aac", "ac3", "eac3", "mp3", "alac", "flac"])
+        #endif
+        
+        let audioStreams = source.mediaStreams?.filter { $0.type == .audio || $0.type?.rawValue.lowercased() == "audio" } ?? []
+        for aStream in audioStreams {
+            if let codec = aStream.codec?.lowercased(), !supportedAudio.contains(codec) {
+                if debug { print("[ResolveStream] Incompatible audio codec for AVPlayer direct play: \(codec)") }
+                return false
+            }
+        }
+        
+        return true
     }
 
     // MARK: - Pre-Open Live Stream (Buffer Warmup)
@@ -91,7 +195,8 @@ struct JFOpenLiveStreamService {
             "ItemId": channelId,
             "UserId": userId,
             "PlaySessionId": UUID().uuidString,
-            "MaxStreamingBitrate": 60_000_000
+            "MaxStreamingBitrate": 60_000_000,
+            "DeviceProfile": JFPlaybackInfoService.buildDeviceProfile(maxBitrate: 60_000_000, isLiveTV: true)
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
@@ -231,11 +336,12 @@ struct JFOpenLiveStreamService {
             let playSessionId = playbackInitial.playSessionID
             var supportsDirectPlay = primary?.isSupportsDirectPlay ?? false
 
-            // OVERRIDE: If the server thinks it can direct play a raw TS tuner file, reject it.
-            // AVPlayer will throw CoreMediaErrorDomain if fed a raw TS URL.
+            // OVERRIDE: Verify AVPlayer compatibility with container and all video/audio codecs.
+            // Even if the server suggests direct play, AVPlayer will fail/crash on raw TS, MPEG2,
+            // VC1, VP9/VP9 10-bit, 10-bit H.264, or interlaced video feeds.
             if supportsDirectPlay {
-                if needsTranscodingForDirectPath(directPath) || primary?.container?.lowercased() == "ts" {
-                    if debug { print("[ResolveStream] Blocked raw TS direct play to prevent AVPlayer crash.") }
+                if !isAVPlayerDirectPlayable(mediaSource: primary, path: directPath, debug: debug) {
+                    if debug { print("[ResolveStream] Overriding supportsDirectPlay to false due to AVPlayer codec/container incompatibility.") }
                     supportsDirectPlay = false
                 }
             }
@@ -263,7 +369,9 @@ struct JFOpenLiveStreamService {
                 itemId: channelId, userId: userId, serverURL: base,
                 accessToken: accessToken, deviceId: deviceId,
                 deviceName: resolvedDeviceName, clientVersion: clientVersion,
-                mediaSourceId: mediaSourceIdInitial, debug: debug
+                mediaSourceId: mediaSourceIdInitial,
+                primaryMediaSource: primary,
+                debug: debug
             ), let final = buildAbsoluteURL(base: base, pathOrUrl: turl) {
                 let authed = ensureApiKeyParam(in: final, token: accessToken)
                 return makeResolved(url: authed, status: "Forced Transcoding")
@@ -289,9 +397,25 @@ struct JFOpenLiveStreamService {
     private static func requestForcedTranscodingUrl(
         itemId: String, userId: String, serverURL: String, accessToken: String,
         deviceId: String, deviceName: String?, clientVersion: String,
-        mediaSourceId: String?, debug: Bool
+        mediaSourceId: String?,
+        primaryMediaSource: MediaSourceInfo? = nil,
+        debug: Bool
     ) async -> String? {
         do {
+            // Check if video stream can safely be copied without re-encoding:
+            // Video stream copy is ONLY safe if the source is already progressive 8-bit H.264.
+            // For MPEG2, VC1, VP9, AV1, HEVC (in TS), or interlaced feeds, stream copy MUST be false so Jellyfin re-encodes.
+            let canCopyVideo: Bool
+            if let primary = primaryMediaSource,
+               let vStream = primary.mediaStreams?.first(where: { $0.type == .video || $0.type?.rawValue.lowercased() == "video" }),
+               let codec = vStream.codec?.lowercased() {
+                canCopyVideo = (codec == "h264" || codec == "avc" || codec == "avc1") &&
+                               (vStream.bitDepth ?? 8) <= 8 &&
+                               (vStream.isInterlaced != true)
+            } else {
+                canCopyVideo = false
+            }
+
             // For Live TV Fallback: Force standard HLS (ts container) and H.264.
             // This prevents fMP4 initialization atom issues with active tuners.
             let (_, turl, _, _) = try await JFPlaybackInfoService.fetchPlaybackInfoWithTranscodingUrl(
@@ -306,7 +430,7 @@ struct JFOpenLiveStreamService {
                 videoCodec: "h264",
                 transcodingProtocol: "hls",
                 transcodingContainer: "ts", // strictly ts for live tuner stability
-                allowVideoStreamCopy: true,
+                allowVideoStreamCopy: canCopyVideo,
                 allowAudioStreamCopy: true,
                 mediaSourceId: mediaSourceId,
                 debug: debug,

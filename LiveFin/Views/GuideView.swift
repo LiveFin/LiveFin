@@ -140,6 +140,19 @@ struct GuideView: View {
                 headerHeight: guideHeaderHeight,
                 gridWidth: visibleWidth,
                 totalHeight: totalGridHeight,
+                onHorizontalScroll: { offsetX in
+                    let screenW = UIScreen.main.bounds.width - guideChannelLabelWidth
+                    let rightEdge = offsetX + max(screenW, 300)
+                    let minutes = rightEdge / guidePxPerMinute
+                    let scrolledDate = baseStart.addingTimeInterval(Double(minutes) * 60)
+                    vm.loadMoreProgramsIfNeeded(
+                        for: selectedDay,
+                        scrolledToDate: scrolledDate,
+                        appState: appState,
+                        baseStart: baseStart,
+                        visibleWidth: visibleWidth
+                    )
+                },
                 timelineContent: {
                     hourTicksView
                         .frame(maxHeight: .infinity, alignment: .topLeading)
@@ -357,15 +370,19 @@ struct GuideSyncGridView<TimelineContent: View, ChannelContent: View, GridConten
     let headerHeight: CGFloat
     let gridWidth: CGFloat
     let totalHeight: CGFloat
+    var onHorizontalScroll: ((CGFloat) -> Void)? = nil
     @ViewBuilder let timelineContent: () -> TimelineContent
     @ViewBuilder let channelContent: () -> ChannelContent
     @ViewBuilder let gridContent: () -> GridContent
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        let coord = Coordinator()
+        coord.onHorizontalScroll = onHorizontalScroll
+        return coord
     }
 
     func makeUIView(context: Context) -> GuideGridContainerView {
+        context.coordinator.onHorizontalScroll = onHorizontalScroll
         let view = GuideGridContainerView(
             channelWidth: channelWidth,
             headerHeight: headerHeight,
@@ -380,6 +397,7 @@ struct GuideSyncGridView<TimelineContent: View, ChannelContent: View, GridConten
     }
 
     func updateUIView(_ uiView: GuideGridContainerView, context: Context) {
+        context.coordinator.onHorizontalScroll = onHorizontalScroll
         uiView.update(
             channelWidth: channelWidth,
             headerHeight: headerHeight,
@@ -395,6 +413,7 @@ struct GuideSyncGridView<TimelineContent: View, ChannelContent: View, GridConten
         weak var timelineScrollView: UIScrollView?
         weak var channelScrollView: UIScrollView?
         weak var gridScrollView: UIScrollView?
+        var onHorizontalScroll: ((CGFloat) -> Void)?
 
         private var isSyncing = false
 
@@ -406,10 +425,12 @@ struct GuideSyncGridView<TimelineContent: View, ChannelContent: View, GridConten
             if scrollView === gridScrollView {
                 channelScrollView?.contentOffset.y = scrollView.contentOffset.y
                 timelineScrollView?.contentOffset.x = scrollView.contentOffset.x
+                onHorizontalScroll?(scrollView.contentOffset.x)
             } else if scrollView === channelScrollView {
                 gridScrollView?.contentOffset.y = scrollView.contentOffset.y
             } else if scrollView === timelineScrollView {
                 gridScrollView?.contentOffset.x = scrollView.contentOffset.x
+                onHorizontalScroll?(scrollView.contentOffset.x)
             }
         }
     }

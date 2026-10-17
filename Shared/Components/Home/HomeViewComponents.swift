@@ -758,24 +758,11 @@ struct LibraryItemCard: View {
 
     @ViewBuilder
     private func renderImage(image: Image) -> some View {
-        ZStack {
-            ZStack {
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: imageWidth, height: imageHeight)
-                    .blur(radius: 32)
-                
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-            }
+        image
+            .resizable()
+            .aspectRatio(contentMode: .fill)
+            .frame(width: imageWidth, height: imageHeight)
             .clipped()
-            
-            image
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(width: imageWidth, height: imageHeight)
-        }
     }
 
     var body: some View {
@@ -810,8 +797,10 @@ struct LibraryItemCard: View {
                             fallbackImage
                         }
                     } else {
-                        if let primaryTag = item.primaryImageTag,
-                           let url = URL(string: "\(base)/Items/\(item.Id)/Images/Primary?tag=\(primaryTag)&maxWidth=\(fetchMaxWidth)&ApiKey=\(appState.apiKey)") {
+                        let imageItemId = item.effectiveImageItemId
+                        let tag = item.effectivePrimaryImageTag
+                        if let primaryTag = tag,
+                           let url = URL(string: "\(base)/Items/\(imageItemId)/Images/Primary?tag=\(primaryTag)&maxWidth=\(fetchMaxWidth)&ApiKey=\(appState.apiKey)") {
                             CachedAsyncImage(url: url) { phase in
                                 switch phase {
                                 case .success(let image): renderImage(image: image)
@@ -825,6 +814,7 @@ struct LibraryItemCard: View {
                     }
                 }
                 .frame(width: imageWidth, height: imageHeight)
+                .clipped()
                 
                 if let progress = progressRatio, progress > 0, progress < 1 {
                     ZStack(alignment: .leading) {

@@ -413,6 +413,13 @@ struct TVGuideView: View {
         .onFocusChange { focused in
             if focused {
                 self.focusedProgramId = b.item.id
+                vm.loadMoreProgramsIfNeeded(
+                    for: selectedDay,
+                    scrolledToDate: b.e,
+                    appState: appState,
+                    baseStart: baseStart,
+                    visibleWidth: visibleWidth
+                )
             }
         }
     }

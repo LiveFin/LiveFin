@@ -12,15 +12,40 @@ import AVKit
 // MARK: - AirPlay picker
 
 struct DragonetAirPlayButton: UIViewRepresentable {
+    var player: AVPlayer? = nil
+    var onPresentingChanged: ((Bool) -> Void)? = nil
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
     func makeUIView(context: Context) -> AVRoutePickerView {
         let v = AVRoutePickerView()
         v.tintColor = .white
         v.activeTintColor = .systemBlue
         v.prioritizesVideoDevices = true
+        v.delegate = context.coordinator
         return v
     }
 
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {
+        context.coordinator.parent = self
+    }
+
+    final class Coordinator: NSObject, AVRoutePickerViewDelegate {
+        var parent: DragonetAirPlayButton
+
+        init(_ parent: DragonetAirPlayButton) {
+            self.parent = parent
+        }
+
+        func routePickerViewWillBeginPresentingRoutes(_ routePickerView: AVRoutePickerView) {
+            parent.onPresentingChanged?(true)
+        }
+
+        func routePickerViewDidEndPresentingRoutes(_ routePickerView: AVRoutePickerView) {
+            parent.onPresentingChanged?(false)
+        }
     }
 }
 
@@ -48,6 +73,8 @@ struct DragonetPlayer: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> DragonetPlayerController {
         let vc = DragonetPlayerController()
+        player.allowsExternalPlayback = true
+        player.usesExternalPlaybackWhileExternalScreenIsActive = true
         vc.player = player
         vc.showsPlaybackControls = false
         
@@ -79,6 +106,8 @@ struct DragonetPlayer: UIViewControllerRepresentable {
         // Essential for MultiView: Updates the controller's player if the ViewModel swaps it,
         // preventing the "audio only / frozen original video" bug.
         if vc.player !== player {
+            player.allowsExternalPlayback = true
+            player.usesExternalPlaybackWhileExternalScreenIsActive = true
             vc.player = player
             context.coordinator.updatePlayer(player)
         }

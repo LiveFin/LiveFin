@@ -95,6 +95,13 @@
 			);
 			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
 		};
+		EB21390E3083C98C0098F452 /* Exceptions for "LiveFin Watch App" folder in "LiveFin Watch App" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"LiveFin-Watch-App-Info.plist",
+			);
+			target = EBE19BBF2F058A7A00C21C63 /* LiveFin Watch App */;
+		};
 		EBA8FA34304BC6D100ECFEDB /* Exceptions for "Shared" folder in "LiveFin Watch App" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -142,6 +149,9 @@
 		};
 		EBE19BC12F058A7A00C21C63 /* LiveFin Watch App */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				EB21390E3083C98C0098F452 /* Exceptions for "LiveFin Watch App" folder in "LiveFin Watch App" target */,
+			);
 			path = "LiveFin Watch App";
 			sourceTree = "<group>";
 		};
@@ -846,7 +856,7 @@
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "";
+				INFOPLIST_FILE = "LiveFin-Watch-App-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = LIveFin;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.kpgamingz.LiveFin;
@@ -884,7 +894,7 @@
 				DEVELOPMENT_TEAM = KFQZK38LL3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "";
+				INFOPLIST_FILE = "LiveFin-Watch-App-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = LIveFin;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.kpgamingz.LiveFin;

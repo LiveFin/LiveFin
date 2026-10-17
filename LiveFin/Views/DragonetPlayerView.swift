@@ -63,6 +63,11 @@ final class DragonetPlayerViewModel: ObservableObject {
 @Published var detectedMatchQuery: MatchQuery?
 @Published var isSportsProgram: Bool = false
 
+// AirPlay State
+@Published var isExternalPlaybackActive: Bool = false
+@Published var externalPlaybackDeviceName: String? = nil
+private var externalPlaybackObserver: NSKeyValueObservation?
+
 // MARK: Player
 
 private(set) var player: AVPlayer
@@ -109,6 +114,8 @@ init(streamURL: URL, channel: LiveTvChannelDto?, program: JFProgram? = nil, appS
     
     self.player = AVPlayer(playerItem: item)
     self.player.automaticallyWaitsToMinimizeStalling = false
+    self.player.allowsExternalPlayback = true
+    self.player.usesExternalPlaybackWhileExternalScreenIsActive = true
     
     if #available(iOS 15.0, *) {
         self.player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
@@ -124,6 +131,7 @@ init(streamURL: URL, channel: LiveTvChannelDto?, program: JFProgram? = nil, appS
     
     setupPlaybackStateObserver()
     setupStreamErrorRecovery()
+    setupExternalPlaybackObservation()
     observeItem(item)
 
     if #available(iOS 15.0, *) {
@@ -223,7 +231,45 @@ func explicitCleanup() {
     }
 
     cancellables.removeAll()
+    externalPlaybackObserver?.invalidate()
+    externalPlaybackObserver = nil
+    NotificationCenter.default.removeObserver(self, name: AVAudioSession.routeChangeNotification, object: nil)
     preventCleanupOnDeinit = true
+}
+
+// MARK: - AirPlay Observation
+
+private func setupExternalPlaybackObservation() {
+    externalPlaybackObserver = player.observe(\.isExternalPlaybackActive, options: [.initial, .new]) { [weak self] _, _ in
+        Task { @MainActor [weak self] in
+            self?.updateExternalPlaybackStatus()
+        }
+    }
+    NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(handleAudioRouteChange),
+        name: AVAudioSession.routeChangeNotification,
+        object: nil
+    )
+    updateExternalPlaybackStatus()
+}
+
+@objc private func handleAudioRouteChange(_ notification: Notification) {
+    Task { @MainActor [weak self] in
+        self?.updateExternalPlaybackStatus()
+    }
+}
+
+private func updateExternalPlaybackStatus() {
+    let active = player.isExternalPlaybackActive
+    self.isExternalPlaybackActive = active
+    if active {
+        let route = AVAudioSession.sharedInstance().currentRoute
+        let airplayPort = route.outputs.first { $0.portType == .airPlay }
+        self.externalPlaybackDeviceName = airplayPort?.portName ?? "AirPlay"
+    } else {
+        self.externalPlaybackDeviceName = nil
+    }
 }
 
 // MARK: - Channel Switching
@@ -1271,10 +1317,15 @@ var effectiveProgram: JFProgram? {
                 makePlayer()
                     .ignoresSafeArea()
 
+                if vm.isExternalPlaybackActive {
+                    airplayActiveOverlay
+                        .zIndex(0.5)
+                }
+
                 bufferImageOverlay
                     .zIndex(1)
                     .allowsHitTesting(false)
-                    .opacity(!vm.hasRenderedVideo ? 1 : 0)
+                    .opacity((!vm.hasRenderedVideo && !vm.isExternalPlaybackActive) ? 1 : 0)
                     .animation(.easeInOut(duration: 0.4), value: vm.hasRenderedVideo)
 
                 spinnerOverlay
@@ -1347,10 +1398,15 @@ var effectiveProgram: JFProgram? {
                 makePlayer()
                     .ignoresSafeArea()
 
+                if vm.isExternalPlaybackActive {
+                    airplayActiveOverlay
+                        .zIndex(0.5)
+                }
+
                 bufferImageOverlay
                     .zIndex(1)
                     .allowsHitTesting(false)
-                    .opacity(!vm.hasRenderedVideo ? 1 : 0)
+                    .opacity((!vm.hasRenderedVideo && !vm.isExternalPlaybackActive) ? 1 : 0)
                     .animation(.easeInOut(duration: 0.4), value: vm.hasRenderedVideo)
 
                 spinnerOverlay
@@ -1719,6 +1775,51 @@ private var spinnerOverlay: some View {
             .scaleEffect(2.0)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+}
+
+private var airplayActiveOverlay: some View {
+    ZStack {
+        Color.black.ignoresSafeArea()
+        
+        VStack(spacing: 18) {
+            Image(systemName: "airplayvideo")
+                .font(.system(size: 64, weight: .light))
+                .foregroundStyle(.white)
+            
+            VStack(spacing: 6) {
+                Text("AirPlay")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                
+                Text("This video is playing on \"\(vm.externalPlaybackDeviceName ?? "AirPlay")\"")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+            }
+        }
+    }
+    .contentShape(Rectangle())
+    .onTapGesture {
+        if showChannelDrawer {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                showChannelDrawer = false
+            }
+            return
+        }
+        if showStatsSidebar {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                showStatsSidebar = false
+            }
+            return
+        }
+        withAnimation(.easeOut(duration: 0.2)) {
+            vm.controlsVisible.toggle()
+        }
+        if vm.controlsVisible {
+            playerController?.resetAutoHideTimer()
+        }
+    }
 }
 
 // MARK: - Core Player
@@ -2482,9 +2583,17 @@ private var pipButton: some View {
 }
 
 private var airplayButton: some View {
-    DragonetAirPlayButton()
-        .frame(width: 44, height: 44)
-        .glassEffect(in: Circle())
+    DragonetAirPlayButton(player: vm.player) { presenting in
+        if presenting {
+            playerController?.cancelTimer()
+        } else {
+            if vm.controlsVisible && !showChannelDrawer && !showStatsSidebar {
+                playerController?.resetAutoHideTimer()
+            }
+        }
+    }
+    .frame(width: 44, height: 44)
+    .glassEffect(in: Circle())
 }
 
 private var closeButton: some View {

@@ -20,11 +20,60 @@ struct JFDynamicChapter: Decodable {
 }
 
 struct JFDynamicMarker: Decodable {
-    let Id: Int?
+    let Id: String?
     let Name: String?
     let PositionTicks: Int64?
     let EndPositionTicks: Int64?
     let MarkerType: String?
+    
+    init(id: String? = nil, name: String? = nil, positionTicks: Int64?, endPositionTicks: Int64?, markerType: String?) {
+        self.Id = id
+        self.Name = name
+        self.PositionTicks = positionTicks
+        self.EndPositionTicks = endPositionTicks
+        self.MarkerType = markerType
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case Id, id
+        case Name, name
+        case PositionTicks, StartPositionTicks, StartTicks, startTicks, positionTicks
+        case EndPositionTicks, EndTicks, endTicks, endPositionTicks
+        case MarkerType, `Type`, type, markerType
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        if let strId = try? container.decodeIfPresent(String.self, forKey: .Id) ?? container.decodeIfPresent(String.self, forKey: .id) {
+            self.Id = strId
+        } else if let intId = try? container.decodeIfPresent(Int.self, forKey: .Id) ?? container.decodeIfPresent(Int.self, forKey: .id) {
+            self.Id = String(intId)
+        } else {
+            self.Id = nil
+        }
+        
+        self.Name = try? container.decodeIfPresent(String.self, forKey: .Name) ?? container.decodeIfPresent(String.self, forKey: .name)
+        
+        var pos: Int64? = try? container.decodeIfPresent(Int64.self, forKey: .PositionTicks)
+        if pos == nil { pos = try? container.decodeIfPresent(Int64.self, forKey: .StartPositionTicks) }
+        if pos == nil { pos = try? container.decodeIfPresent(Int64.self, forKey: .StartTicks) }
+        if pos == nil { pos = try? container.decodeIfPresent(Int64.self, forKey: .startTicks) }
+        if pos == nil { pos = try? container.decodeIfPresent(Int64.self, forKey: .positionTicks) }
+        self.PositionTicks = pos
+        
+        var end: Int64? = try? container.decodeIfPresent(Int64.self, forKey: .EndPositionTicks)
+        if end == nil { end = try? container.decodeIfPresent(Int64.self, forKey: .EndTicks) }
+        if end == nil { end = try? container.decodeIfPresent(Int64.self, forKey: .endTicks) }
+        if end == nil { end = try? container.decodeIfPresent(Int64.self, forKey: .endPositionTicks) }
+        self.EndPositionTicks = end
+        
+        var mType: String? = try? container.decodeIfPresent(String.self, forKey: .MarkerType)
+        if mType == nil { mType = try? container.decodeIfPresent(String.self, forKey: .`Type`) }
+        if mType == nil { mType = try? container.decodeIfPresent(String.self, forKey: .type) }
+        if mType == nil { mType = try? container.decodeIfPresent(String.self, forKey: .markerType) }
+        self.MarkerType = mType
+    }
 }
 
 struct JFMediaStream: Decodable, Hashable {
@@ -74,6 +123,16 @@ struct JFItemMediaData: Decodable {
     let Markers: [JFDynamicMarker]?
 }
 
+struct JFMediaSegmentsResponse: Decodable {
+    let Items: [JFDynamicMarker]?
+}
+
+struct JFLegacyIntroResponse: Decodable {
+    let Valid: Bool?
+    let IntroStart: Double?
+    let IntroEnd: Double?
+}
+
 struct VTTCue: Identifiable, Sendable {
     let id = UUID()
     let startTime: Double
@@ -92,11 +151,25 @@ final class PlanktonPlayerViewModel: ObservableObject {
     @Published var seriesName: String?
     @Published var isShuffled: Bool
     
+    // Seasons & QuickSwitch State
+    @Published var seasons: [JFItemDto] = []
+    @Published var selectedSeasonId: String? = nil
+    @Published var drawerEpisodes: [JFItemDto] = []
+    @Published var isLoadingSeasons: Bool = false
+    @Published var isLoadingSeasonEpisodes: Bool = false
+    private var loadedSeriesId: String? = nil
+    private var seasonEpisodesCache: [String: [JFItemDto]] = [:]
+    
     @Published var controlsVisible: Bool = true
     @Published var isPlaying: Bool = true
     @Published var isBuffering: Bool = true
     @Published var isPiPActive: Bool = false
     @Published var isCCEnabled: Bool = false
+    
+    // AirPlay State
+    @Published var isExternalPlaybackActive: Bool = false
+    @Published var externalPlaybackDeviceName: String? = nil
+    private var externalPlaybackObserver: NSKeyValueObservation?
     
     @Published var isSettingUpPlayerItem: Bool = false
     @Published var autoPlayNextEpisode: Bool = true
@@ -138,10 +211,12 @@ final class PlanktonPlayerViewModel: ObservableObject {
     
     let appState: AppState
     @Published var streamURL: URL? = nil
+    @Published var errorMessage: String? = nil
     
     private var timeObserver: Any?
     private var itemStatusObserver: NSKeyValueObservation?
     private var playbackStateObserver: NSKeyValueObservation?
+    private var playerStatusObserver: NSKeyValueObservation?
     
     private var hasResumedCurrentItem = false
     private var lastReportedTicks: Int64 = 0
@@ -151,12 +226,15 @@ final class PlanktonPlayerViewModel: ObservableObject {
 
     init(playlist: [JFItemDto], startIndex: Int, seriesName: String?, isShuffled: Bool = false, appState: AppState) {
         self.playlist = playlist
+        self.drawerEpisodes = playlist
         self.currentIndex = startIndex
         self.seriesName = seriesName
         self.isShuffled = isShuffled
         self.appState = appState
         
         self.player.automaticallyWaitsToMinimizeStalling = true
+        self.player.allowsExternalPlayback = true
+        self.player.usesExternalPlaybackWhileExternalScreenIsActive = true
         self.isSettingUpPlayerItem = true
         
         if #available(iOS 15.0, *) {
@@ -169,8 +247,15 @@ final class PlanktonPlayerViewModel: ObservableObject {
             name: .AVPlayerItemDidPlayToEndTime,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(playerItemFailedToPlayToEndTime),
+            name: .AVPlayerItemFailedToPlayToEndTime,
+            object: nil
+        )
         
         setupPlaybackStateObserver()
+        setupExternalPlaybackObservation()
         loadItem(at: currentIndex)
         setupRemoteCommands()
     }
@@ -184,6 +269,9 @@ final class PlanktonPlayerViewModel: ObservableObject {
         }
         itemStatusObserver?.invalidate()
         playbackStateObserver?.invalidate()
+        playerStatusObserver?.invalidate()
+        externalPlaybackObserver?.invalidate()
+        externalPlaybackObserver = nil
         NotificationCenter.default.removeObserver(self)
         
         let center = MPRemoteCommandCenter.shared()
@@ -199,6 +287,41 @@ final class PlanktonPlayerViewModel: ObservableObject {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         player.pause()
         player.replaceCurrentItem(with: nil)
+    }
+
+    // MARK: - AirPlay Observation
+
+    private func setupExternalPlaybackObservation() {
+        externalPlaybackObserver = player.observe(\.isExternalPlaybackActive, options: [.initial, .new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                self?.updateExternalPlaybackStatus()
+            }
+        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioRouteChange),
+            name: AVAudioSession.routeChangeNotification,
+            object: nil
+        )
+        updateExternalPlaybackStatus()
+    }
+
+    @objc private func handleAudioRouteChange(_ notification: Notification) {
+        Task { @MainActor [weak self] in
+            self?.updateExternalPlaybackStatus()
+        }
+    }
+
+    private func updateExternalPlaybackStatus() {
+        let active = player.isExternalPlaybackActive
+        self.isExternalPlaybackActive = active
+        if active {
+            let route = AVAudioSession.sharedInstance().currentRoute
+            let airplayPort = route.outputs.first { $0.portType == .airPlay }
+            self.externalPlaybackDeviceName = airplayPort?.portName ?? "AirPlay"
+        } else {
+            self.externalPlaybackDeviceName = nil
+        }
     }
     
     var currentItem: JFItemDto? {
@@ -223,8 +346,10 @@ final class PlanktonPlayerViewModel: ObservableObject {
             if currentTicks >= startTicks && currentTicks < endTicks {
                 let name = marker.Name?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let type = marker.MarkerType?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if type == "introstart" || type == "intro" || name.contains("intro") {
-                    return Double(endTicks) / 10_000_000.0
+                if type == "introstart" || type == "intro" || type.contains("intro") || name.contains("intro") {
+                    if let end = marker.EndPositionTicks, end > startTicks {
+                        return Double(end) / 10_000_000.0
+                    }
                 }
             }
         }
@@ -248,14 +373,14 @@ final class PlanktonPlayerViewModel: ObservableObject {
         for marker in activeMarkers {
             let name = marker.Name?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let type = marker.MarkerType?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if type == "credits" || name.contains("credits") || name == "ending" {
+            if type == "credits" || name.contains("credits") || name == "ending" || type == "outro" || name.contains("outro") {
                 return Double(marker.PositionTicks ?? 0) / 10_000_000.0
             }
         }
         for chapter in activeChapters {
             let name = chapter.Name?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let type = chapter.MarkerType?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if type == "credits" || name.contains("credits") || name == "ending" {
+            if type == "credits" || name.contains("credits") || name == "ending" || type == "outro" || name.contains("outro") {
                 return Double(chapter.StartPositionTicks ?? 0) / 10_000_000.0
             }
         }
@@ -272,6 +397,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
         }
         
         let item = playlist[index]
+        self.errorMessage = nil
         self.hasResumedCurrentItem = false
         self.isBuffering = true
         self.isSettingUpPlayerItem = true
@@ -302,6 +428,9 @@ final class PlanktonPlayerViewModel: ObservableObject {
         if !self.isShuffled {
             self.dynamicallyFetchNextEpisodes(for: item)
         }
+        if item.Type.caseInsensitiveCompare("episode") == .orderedSame {
+            self.fetchSeasons(for: item)
+        }
         
         Task {
             let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
@@ -314,9 +443,47 @@ final class PlanktonPlayerViewModel: ObservableObject {
                 let (data, _) = try await URLSession.shared.data(for: req)
                 let itemData = try JSONDecoder().decode(JFItemMediaData.self, from: data)
                 
+                var detectedMarkers: [JFDynamicMarker] = itemData.Markers ?? []
+                
+                // Fetch MediaSegments (Jellyfin 10.10+ / Intro Skipper 12.0+)
+                if let segUrl = URL(string: "\(base)/MediaSegments/\(item.Id)") {
+                    var segReq = URLRequest(url: segUrl)
+                    segReq.setValue(self.appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+                    if let (segData, segResp) = try? await URLSession.shared.data(for: segReq),
+                       let httpResp = segResp as? HTTPURLResponse, httpResp.statusCode == 200 {
+                        if let queryResult = try? JSONDecoder().decode(JFMediaSegmentsResponse.self, from: segData),
+                           let items = queryResult.Items, !items.isEmpty {
+                            detectedMarkers.append(contentsOf: items)
+                        } else if let list = try? JSONDecoder().decode([JFDynamicMarker].self, from: segData), !list.isEmpty {
+                            detectedMarkers.append(contentsOf: list)
+                        }
+                    }
+                }
+                
+                // Fallback to legacy Intro Skipper plugin endpoint if no intro marker found yet
+                if !detectedMarkers.contains(where: { ($0.MarkerType?.lowercased().contains("intro") ?? false) }) {
+                    if let legacyUrl = URL(string: "\(base)/Episode/\(item.Id)/IntroTimestamps") {
+                        var legacyReq = URLRequest(url: legacyUrl)
+                        legacyReq.setValue(self.appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+                        if let (legacyData, legacyResp) = try? await URLSession.shared.data(for: legacyReq),
+                           let httpResp = legacyResp as? HTTPURLResponse, httpResp.statusCode == 200,
+                           let legacy = try? JSONDecoder().decode(JFLegacyIntroResponse.self, from: legacyData),
+                           legacy.Valid == true,
+                           let start = legacy.IntroStart, let end = legacy.IntroEnd, end > start {
+                            detectedMarkers.append(JFDynamicMarker(
+                                id: nil,
+                                name: "Intro",
+                                positionTicks: Int64(start * 10_000_000),
+                                endPositionTicks: Int64(end * 10_000_000),
+                                markerType: "Intro"
+                            ))
+                        }
+                    }
+                }
+                
                 await MainActor.run {
                     self.activeChapters = itemData.Chapters ?? []
-                    self.activeMarkers = itemData.Markers ?? []
+                    self.activeMarkers = detectedMarkers
                     
                     if let source = itemData.MediaSources?.first {
                         self.defaultMediaSourceId = source.Id
@@ -349,6 +516,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
         let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
         
         await MainActor.run {
+            self.errorMessage = nil
             self.isSettingUpPlayerItem = true
             self.isBuffering = true
             self.player.pause()
@@ -364,7 +532,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
                 subtitleStreamIndexToTranscode = nil
             }
             
-            let (_, turl, mediaSourceIdOut, _) = try await JFPlaybackInfoService.fetchPlaybackInfoWithTranscodingUrl(
+            let (playbackInfo, turl, mediaSourceIdOut, _) = try await JFPlaybackInfoService.fetchPlaybackInfoWithTranscodingUrl(
                 itemId: item.Id,
                 userId: appState.userID,
                 serverURL: appState.serverURL,
@@ -381,6 +549,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
                 debug: true
             )
             
+            let primarySource = playbackInfo.mediaSources?.first
             let finalUrlString: String
             if let turl = turl, !turl.isEmpty {
                 if turl.hasPrefix("http") {
@@ -388,8 +557,20 @@ final class PlanktonPlayerViewModel: ObservableObject {
                 } else {
                     finalUrlString = base + (turl.hasPrefix("/") ? turl : "/\(turl)")
                 }
+            } else if primarySource?.isSupportsDirectPlay == true, let path = primarySource?.path, path.hasPrefix("http") {
+                finalUrlString = path
+            } else if primarySource?.isSupportsDirectPlay == true {
+                let ext = (primarySource?.container ?? "mp4").lowercased()
+                finalUrlString = "\(base)/Videos/\(item.Id)/stream.\(ext)?Static=true"
             } else {
-                finalUrlString = "\(base)/Videos/\(item.Id)/stream.mp4?Static=true"
+                await MainActor.run {
+                    let msg = "Server did not return a playable stream URL for this item."
+                    self.errorMessage = msg
+                    self.isBuffering = false
+                    self.isSettingUpPlayerItem = false
+                    self.onPlaybackError?(msg)
+                }
+                return
             }
             
             var components = URLComponents(string: finalUrlString)
@@ -412,7 +593,16 @@ final class PlanktonPlayerViewModel: ObservableObject {
             }
             
             components?.queryItems = queryItems
-            guard let url = components?.url else { return }
+            guard let url = components?.url else {
+                await MainActor.run {
+                    let msg = "Unable to create stream URL."
+                    self.errorMessage = msg
+                    self.isBuffering = false
+                    self.isSettingUpPlayerItem = false
+                    self.onPlaybackError?(msg)
+                }
+                return
+            }
             
             await MainActor.run {
                 self.streamURL = url
@@ -456,6 +646,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
             await MainActor.run {
                 self.isBuffering = false
                 self.isSettingUpPlayerItem = false
+                self.errorMessage = error.localizedDescription
                 self.onPlaybackError?(error.localizedDescription)
             }
         }
@@ -473,6 +664,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
                 guard let self = self else { return }
                 
                 if observedItem.status == .readyToPlay {
+                    self.errorMessage = nil
                     self.duration = observedItem.duration.seconds.isNaN ? 0 : observedItem.duration.seconds
                     self.updateNowPlayingPlaybackState()
                     
@@ -497,6 +689,12 @@ final class PlanktonPlayerViewModel: ObservableObject {
                     }
                     
                     self.isSettingUpPlayerItem = false
+                } else if observedItem.status == .failed {
+                    let msg = observedItem.error?.localizedDescription ?? "Playback failed"
+                    self.errorMessage = msg
+                    self.isBuffering = false
+                    self.isSettingUpPlayerItem = false
+                    self.onPlaybackError?(msg)
                 }
             }
         }
@@ -555,6 +753,38 @@ final class PlanktonPlayerViewModel: ObservableObject {
                 
                 self.updateNowPlayingPlaybackState()
             }
+        }
+        
+        playerStatusObserver = player.observe(\.status, options: [.new]) { [weak self] player, _ in
+            guard let self = self, player.status == .failed else { return }
+            let msg = player.error?.localizedDescription ?? "Playback failed"
+            DispatchQueue.main.async {
+                self.errorMessage = msg
+                self.isBuffering = false
+                self.isSettingUpPlayerItem = false
+                self.onPlaybackError?(msg)
+            }
+        }
+    }
+    
+    @objc private func playerItemFailedToPlayToEndTime(notification: NSNotification) {
+        guard let failedItem = notification.object as? AVPlayerItem,
+              failedItem == player.currentItem else { return }
+        let msg = failedItem.error?.localizedDescription ?? "Playback failed to play to end time."
+        DispatchQueue.main.async {
+            self.errorMessage = msg
+            self.isBuffering = false
+            self.isSettingUpPlayerItem = false
+            self.onPlaybackError?(msg)
+        }
+    }
+    
+    func retryPlayback() {
+        self.errorMessage = nil
+        self.isBuffering = true
+        Task {
+            let resume = self.currentTime > 0 ? self.currentTime : nil
+            await self.playCurrentSelection(resumeTime: resume)
         }
     }
     
@@ -1007,7 +1237,7 @@ final class PlanktonPlayerViewModel: ObservableObject {
             components?.queryItems = [
                 URLQueryItem(name: "seasonId", value: seasonId),
                 URLQueryItem(name: "userId", value: appState.userID),
-                URLQueryItem(name: "Fields", value: "Overview,ImageTags,UserData,SeriesName,SeriesId")
+                URLQueryItem(name: "Fields", value: "Overview,ImageTags,UserData,SeriesName,SeriesId,SeasonId,ParentIndexNumber,IndexNumber,RunTimeTicks")
             ]
             
             guard let url = components?.url else { return }
@@ -1022,13 +1252,26 @@ final class PlanktonPlayerViewModel: ObservableObject {
                 let decoded = try JSONDecoder().decode(EpisodesResponse.self, from: data)
                 
                 if let matchedIndex = decoded.Items.firstIndex(where: { $0.Id == item.Id }) {
-                    let nextEpisodes = Array(decoded.Items[(matchedIndex + 1)...])
-                    if !nextEpisodes.isEmpty {
-                        await MainActor.run {
-                            guard self.currentIndex == self.playlist.count - 1 else { return }
-                            self.playlist.append(contentsOf: nextEpisodes)
+                    await MainActor.run {
+                        self.seasonEpisodesCache[seasonId] = decoded.Items
+                        if self.selectedSeasonId == seasonId || self.selectedSeasonId == nil {
+                            self.selectedSeasonId = seasonId
+                            self.drawerEpisodes = decoded.Items
                         }
-                    } else {
+                        
+                        // If playlist is missing previous episodes, expand it to the full season
+                        if self.playlist.count < decoded.Items.count {
+                            self.playlist = decoded.Items
+                            self.currentIndex = matchedIndex
+                        } else if matchedIndex + 1 < decoded.Items.count {
+                            let nextEpisodes = Array(decoded.Items[(matchedIndex + 1)...])
+                            if self.currentIndex == self.playlist.count - 1 {
+                                self.playlist.append(contentsOf: nextEpisodes)
+                            }
+                        }
+                    }
+                    
+                    if matchedIndex == decoded.Items.count - 1 {
                         await fetchNextSeasonEpisodes(seriesId: seriesId, currentSeasonId: seasonId, base: base)
                     }
                 }
@@ -1038,38 +1281,263 @@ final class PlanktonPlayerViewModel: ObservableObject {
         }
     }
     
-    private func fetchNextSeasonEpisodes(seriesId: String, currentSeasonId: String, base: String) async {
-        guard let url = URL(string: "\(base)/Shows/\(seriesId)/Seasons?userId=\(appState.userID)") else { return }
-        var req = URLRequest(url: url)
-        req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+    // MARK: - Season & QuickSwitch Management
+    
+    var selectedSeason: JFItemDto? {
+        seasons.first(where: { $0.Id == selectedSeasonId })
+    }
+    
+    func fetchSeasons(for item: JFItemDto?) {
+        guard let item = item, item.Type.caseInsensitiveCompare("episode") == .orderedSame else { return }
         
-        do {
-            let (data, _) = try await URLSession.shared.data(for: req)
-            struct SeasonsResponse: Decodable { let Items: [JFItemDto] }
-            let decoded = try JSONDecoder().decode(SeasonsResponse.self, from: data)
+        Task {
+            let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
+            var targetSeriesId = item.SeriesId
+            var targetSeasonId = item.SeasonId
             
-            let seasons = decoded.Items
-            guard let currentIdx = seasons.firstIndex(where: { $0.Id == currentSeasonId }),
-                  currentIdx + 1 < seasons.count else { return }
+            if targetSeriesId == nil || targetSeasonId == nil {
+                guard let url = URL(string: "\(base)/Users/\(appState.userID)/Items/\(item.Id)?Fields=SeriesId,SeasonId,SeriesName") else { return }
+                var req = URLRequest(url: url)
+                req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+                if let (data, _) = try? await URLSession.shared.data(for: req),
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    if targetSeriesId == nil { targetSeriesId = json["SeriesId"] as? String }
+                    if targetSeasonId == nil { targetSeasonId = json["SeasonId"] as? String }
+                    if self.seriesName == nil { self.seriesName = json["SeriesName"] as? String }
+                }
+            }
             
-            let nextSeason = seasons[currentIdx + 1]
+            guard let seriesId = targetSeriesId else { return }
             
+            if self.loadedSeriesId == seriesId && !self.seasons.isEmpty {
+                await MainActor.run {
+                    if let sid = targetSeasonId, self.seasons.contains(where: { $0.Id == sid }) {
+                        self.selectedSeasonId = sid
+                    } else if let pIndex = item.ParentIndexNumber,
+                              let match = self.seasons.first(where: { $0.IndexNumber == pIndex }) {
+                        self.selectedSeasonId = match.Id
+                    }
+                    
+                    if let sid = self.selectedSeasonId {
+                        if let cached = self.seasonEpisodesCache[sid] {
+                            self.drawerEpisodes = cached
+                            if let cur = self.currentItem,
+                               (cur.SeasonId == sid || cached.contains(where: { $0.Id == cur.Id })),
+                               !self.isShuffled,
+                               let matchedIndex = cached.firstIndex(where: { $0.Id == cur.Id }) {
+                                if self.playlist.count < cached.count || self.currentIndex != matchedIndex {
+                                    self.playlist = cached
+                                    self.currentIndex = matchedIndex
+                                }
+                            }
+                        } else {
+                            self.loadEpisodesForSeason(seasonId: sid, seriesId: seriesId)
+                        }
+                    }
+                }
+                return
+            }
+            
+            self.loadedSeriesId = seriesId
+            self.isLoadingSeasons = true
+            
+            guard let url = URL(string: "\(base)/Shows/\(seriesId)/Seasons?userId=\(appState.userID)") else {
+                self.isLoadingSeasons = false
+                return
+            }
+            var req = URLRequest(url: url)
+            req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+            
+            do {
+                let (data, response) = try await URLSession.shared.data(for: req)
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    self.isLoadingSeasons = false
+                    return
+                }
+                struct SeasonsResponse: Decodable { let Items: [JFItemDto] }
+                let decoded = try JSONDecoder().decode(SeasonsResponse.self, from: data)
+                
+                await MainActor.run {
+                    self.seasons = decoded.Items
+                    self.isLoadingSeasons = false
+                    
+                    if let sid = targetSeasonId, self.seasons.contains(where: { $0.Id == sid }) {
+                        self.selectedSeasonId = sid
+                    } else if let pIndex = item.ParentIndexNumber,
+                              let match = self.seasons.first(where: { $0.IndexNumber == pIndex }) {
+                        self.selectedSeasonId = match.Id
+                    } else {
+                        self.selectedSeasonId = self.seasons.first?.Id
+                    }
+                    
+                    if let sid = self.selectedSeasonId {
+                        if let cached = self.seasonEpisodesCache[sid] {
+                            self.drawerEpisodes = cached
+                            if let cur = self.currentItem,
+                               (cur.SeasonId == sid || cached.contains(where: { $0.Id == cur.Id })),
+                               !self.isShuffled,
+                               let matchedIndex = cached.firstIndex(where: { $0.Id == cur.Id }) {
+                                if self.playlist.count < cached.count || self.currentIndex != matchedIndex {
+                                    self.playlist = cached
+                                    self.currentIndex = matchedIndex
+                                }
+                            }
+                        } else {
+                            self.loadEpisodesForSeason(seasonId: sid, seriesId: seriesId)
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.isLoadingSeasons = false
+                }
+                print("Failed to fetch seasons: \(error)")
+            }
+        }
+    }
+    
+    func selectSeason(_ season: JFItemDto) {
+        guard selectedSeasonId != season.Id else { return }
+        selectedSeasonId = season.Id
+        
+        if let cached = seasonEpisodesCache[season.Id] {
+            self.drawerEpisodes = cached
+            return
+        }
+        
+        guard let seriesId = loadedSeriesId ?? currentItem?.SeriesId else { return }
+        loadEpisodesForSeason(seasonId: season.Id, seriesId: seriesId)
+    }
+    
+    func loadEpisodesForSeason(seasonId: String, seriesId: String) {
+        isLoadingSeasonEpisodes = true
+        Task {
+            let base = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
             var components = URLComponents(string: "\(base)/Shows/\(seriesId)/Episodes")
             components?.queryItems = [
-                URLQueryItem(name: "seasonId", value: nextSeason.Id),
+                URLQueryItem(name: "seasonId", value: seasonId),
                 URLQueryItem(name: "userId", value: appState.userID),
-                URLQueryItem(name: "Fields", value: "Overview,ImageTags,UserData,SeriesName,SeriesId")
+                URLQueryItem(name: "Fields", value: "Overview,ImageTags,UserData,SeriesName,SeriesId,SeasonId,ParentIndexNumber,IndexNumber,RunTimeTicks")
             ]
-            guard let epUrl = components?.url else { return }
-            var epReq = URLRequest(url: epUrl)
-            epReq.setValue(epReq.value(forHTTPHeaderField: "X-Emby-Token") ?? appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+            guard let url = components?.url else {
+                await MainActor.run { self.isLoadingSeasonEpisodes = false }
+                return
+            }
+            var req = URLRequest(url: url)
+            req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
             
+            do {
+                let (data, response) = try await URLSession.shared.data(for: req)
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    await MainActor.run { self.isLoadingSeasonEpisodes = false }
+                    return
+                }
+                struct EpisodesResponse: Decodable { let Items: [JFItemDto] }
+                let decoded = try JSONDecoder().decode(EpisodesResponse.self, from: data)
+                
+                await MainActor.run {
+                    self.seasonEpisodesCache[seasonId] = decoded.Items
+                    if self.selectedSeasonId == seasonId {
+                        self.drawerEpisodes = decoded.Items
+                    }
+                    
+                    // If current item is from this season, ensure playlist contains ALL episodes
+                    // so all previous episodes exist in the queue and can be navigated to
+                    if let cur = self.currentItem,
+                       (cur.SeasonId == seasonId || decoded.Items.contains(where: { $0.Id == cur.Id })),
+                       !self.isShuffled {
+                        if let matchedIndex = decoded.Items.firstIndex(where: { $0.Id == cur.Id }) {
+                            if self.playlist.count < decoded.Items.count || self.currentIndex != matchedIndex {
+                                self.playlist = decoded.Items
+                                self.currentIndex = matchedIndex
+                            }
+                            if matchedIndex == decoded.Items.count - 1 {
+                                Task {
+                                    await self.fetchNextSeasonEpisodes(seriesId: seriesId, currentSeasonId: seasonId, base: base)
+                                }
+                            }
+                        }
+                    }
+                    
+                    self.isLoadingSeasonEpisodes = false
+                }
+            } catch {
+                print("Failed to fetch episodes for season \(seasonId): \(error)")
+                await MainActor.run { self.isLoadingSeasonEpisodes = false }
+            }
+        }
+    }
+    
+    func playDrawerItem(item: JFItemDto) {
+        if let idx = playlist.firstIndex(where: { $0.Id == item.Id }) {
+            if idx != currentIndex {
+                currentIndex = idx
+                loadItem(at: idx)
+            }
+        } else {
+            let newPlaylist = self.drawerEpisodes.isEmpty ? [item] : self.drawerEpisodes
+            self.playlist = newPlaylist
+            if let newIdx = newPlaylist.firstIndex(where: { $0.Id == item.Id }) {
+                self.currentIndex = newIdx
+                self.loadItem(at: newIdx)
+            } else {
+                self.currentIndex = 0
+                self.loadItem(at: 0)
+            }
+        }
+    }
+    
+    func playSelectedSeasonFromBeginning() {
+        guard let firstEp = drawerEpisodes.first else { return }
+        playDrawerItem(item: firstEp)
+    }
+    
+    private func fetchNextSeasonEpisodes(seriesId: String, currentSeasonId: String, base: String) async {
+        let seasonsList: [JFItemDto]
+        if !self.seasons.isEmpty {
+            seasonsList = self.seasons
+        } else {
+            guard let url = URL(string: "\(base)/Shows/\(seriesId)/Seasons?userId=\(appState.userID)") else { return }
+            var req = URLRequest(url: url)
+            req.setValue(appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+            
+            guard let (data, _) = try? await URLSession.shared.data(for: req) else { return }
+            struct SeasonsResponse: Decodable { let Items: [JFItemDto] }
+            guard let decoded = try? JSONDecoder().decode(SeasonsResponse.self, from: data) else { return }
+            seasonsList = decoded.Items
+        }
+        
+        guard let currentIdx = seasonsList.firstIndex(where: { $0.Id == currentSeasonId }),
+              currentIdx + 1 < seasonsList.count else { return }
+        
+        let nextSeason = seasonsList[currentIdx + 1]
+        
+        if let cached = seasonEpisodesCache[nextSeason.Id], !cached.isEmpty {
+            await MainActor.run {
+                guard self.currentIndex == self.playlist.count - 1 else { return }
+                self.playlist.append(contentsOf: cached)
+            }
+            return
+        }
+        
+        var components = URLComponents(string: "\(base)/Shows/\(seriesId)/Episodes")
+        components?.queryItems = [
+            URLQueryItem(name: "seasonId", value: nextSeason.Id),
+            URLQueryItem(name: "userId", value: appState.userID),
+            URLQueryItem(name: "Fields", value: "Overview,ImageTags,UserData,SeriesName,SeriesId,SeasonId,ParentIndexNumber,IndexNumber,RunTimeTicks")
+        ]
+        guard let epUrl = components?.url else { return }
+        var epReq = URLRequest(url: epUrl)
+        epReq.setValue(epReq.value(forHTTPHeaderField: "X-Emby-Token") ?? appState.accessToken, forHTTPHeaderField: "X-Emby-Token")
+        
+        do {
             let (epData, _) = try await URLSession.shared.data(for: epReq)
             struct EpisodesResponse: Decodable { let Items: [JFItemDto] }
             let epDecoded = try JSONDecoder().decode(EpisodesResponse.self, from: epData)
             
             if !epDecoded.Items.isEmpty {
                 await MainActor.run {
+                    self.seasonEpisodesCache[nextSeason.Id] = epDecoded.Items
                     guard self.currentIndex == self.playlist.count - 1 else { return }
                     self.playlist.append(contentsOf: epDecoded.Items)
                 }
@@ -1099,18 +1567,30 @@ struct PlanktonPlayerView: View {
     }
     
     var body: some View {
-        DuoTabletopSplitLayout(isPartiallyFolded: isPartiallyFolded) {
-            tabletopVideoPane
-        } secondary: {
-            tabletopDeckPane
-        } normal: {
-            normalPlayerContent
+        ZStack {
+            DuoTabletopSplitLayout(isPartiallyFolded: isPartiallyFolded) {
+                tabletopVideoPane
+            } secondary: {
+                tabletopDeckPane
+            } normal: {
+                normalPlayerContent
+            }
+            .duoHingeObservation(isPartiallyFolded: $isPartiallyFolded)
+            
+            if let error = vm.errorMessage {
+                errorStateView(error)
+                    .zIndex(20)
+                    .transition(.opacity)
+            }
         }
-        .duoHingeObservation(isPartiallyFolded: $isPartiallyFolded)
+        .animation(.easeInOut(duration: 0.25), value: vm.errorMessage != nil)
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .onAppear {
-            vm.onPlaybackError = self.onPlaybackError
+            vm.onPlaybackError = { msg in
+                vm.errorMessage = msg
+                self.onPlaybackError?(msg)
+            }
             
             vm.onFinishedPlaylist = {
                 dismiss()
@@ -1165,7 +1645,10 @@ struct PlanktonPlayerView: View {
                     isPiPActive: $vm.isPiPActive,
                     isCCEnabled: $vm.isCCEnabled,
                     controlsVisible: $vm.controlsVisible,
-                    onPlaybackError: self.onPlaybackError
+                    onPlaybackError: { msg in
+                        vm.errorMessage = msg
+                        self.onPlaybackError?(msg)
+                    }
                 ) { vc in
                     vc.updatesNowPlayingInfoCenter = false
                     playerController = vc
@@ -1173,7 +1656,7 @@ struct PlanktonPlayerView: View {
                 .ignoresSafeArea()
             }
             
-            if vm.isBuffering {
+            if vm.isBuffering && vm.errorMessage == nil {
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
                     .scaleEffect(2.0)
@@ -1294,6 +1777,45 @@ struct PlanktonPlayerView: View {
         }
     }
     
+    private var airplayActiveOverlay: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            
+            VStack(spacing: 18) {
+                Image(systemName: "airplayvideo")
+                    .font(.system(size: 64, weight: .light))
+                    .foregroundStyle(.white)
+                
+                VStack(spacing: 6) {
+                    Text("AirPlay")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(.white)
+                    
+                    Text("This video is playing on \"\(vm.externalPlaybackDeviceName ?? "AirPlay")\"")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if showEpisodesDrawer {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    showEpisodesDrawer = false
+                }
+                return
+            }
+            withAnimation(.easeOut(duration: 0.2)) {
+                vm.controlsVisible.toggle()
+            }
+            if vm.controlsVisible {
+                playerController?.resetAutoHideTimer()
+            }
+        }
+    }
+
     private var normalPlayerContent: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -1306,7 +1828,10 @@ struct PlanktonPlayerView: View {
                     isPiPActive: $vm.isPiPActive,
                     isCCEnabled: $vm.isCCEnabled,
                     controlsVisible: $vm.controlsVisible,
-                    onPlaybackError: self.onPlaybackError
+                    onPlaybackError: { msg in
+                        vm.errorMessage = msg
+                        self.onPlaybackError?(msg)
+                    }
                 ) { vc in
                     vc.updatesNowPlayingInfoCenter = false
                     
@@ -1331,8 +1856,13 @@ struct PlanktonPlayerView: View {
                 .ignoresSafeArea()
             }
             
+            // ── AirPlay Active Screen ──
+            if vm.isExternalPlaybackActive {
+                airplayActiveOverlay
+            }
+            
             // ── 2. Loading Indicator ──
-            if vm.isBuffering {
+            if vm.isBuffering && vm.errorMessage == nil {
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
                     .scaleEffect(2.0)
@@ -1340,7 +1870,7 @@ struct PlanktonPlayerView: View {
             }
             
             // ── 3. Custom Subtitles Overlay ──
-            if !vm.currentSubtitleText.isEmpty {
+            if !vm.isExternalPlaybackActive && !vm.currentSubtitleText.isEmpty {
                 VStack {
                     Spacer()
                     Text(vm.currentSubtitleText)
@@ -1428,7 +1958,7 @@ struct PlanktonPlayerView: View {
         .gesture(
             DragGesture(minimumDistance: 25)
                 .onEnded { value in
-                    if value.translation.height < -40 && vm.playlist.count > 1 {
+                    if value.translation.height < -40 && (vm.playlist.count > 1 || vm.isEpisode) {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                             showEpisodesDrawer = true
                         }
@@ -1466,125 +1996,212 @@ struct PlanktonPlayerView: View {
                     }
                 }
                 
-                Text(vm.isEpisode ? "Episodes" : "Playlist")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-
-                ScrollViewReader { proxy in
+                // Header Row
+                HStack(alignment: .center, spacing: 10) {
+                    Text(vm.isEpisode ? "Episodes" : "Playlist")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                    
+                    Spacer()
+                    
+                    // Quick Action: If user switched to another season, allow playing from start directly
+                    if vm.isEpisode, let selectedSeason = vm.selectedSeason,
+                       let currentSeasonId = vm.currentItem?.SeasonId ?? vm.seasons.first(where: { $0.IndexNumber == vm.currentItem?.ParentIndexNumber })?.Id,
+                       selectedSeason.Id != currentSeasonId {
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                showEpisodesDrawer = false
+                            }
+                            vm.playSelectedSeasonFromBeginning()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text("Play Season")
+                                    .font(.caption.weight(.bold))
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Color.blue)
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    }
+                }
+                .padding(.horizontal, 4)
+                
+                // Horizontal Season Pills Row (Direct Quick Switching)
+                if vm.isEpisode && vm.seasons.count > 1 {
                     ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 12) {
-                            ForEach(Array(vm.playlist.enumerated()), id: \.element.Id) { index, item in
-                                let isCurrent = index == vm.currentIndex
-                                let s = item.ParentIndexNumber.map { String(format: "S%02d", $0) } ?? ""
-                                let e = item.IndexNumber.map { String(format: "E%02d", $0) } ?? ""
-                                let se = [s, e].filter { !$0.isEmpty }.joined()
-                                let targetImageId = item.ImageTags?["Primary"] != nil ? item.Id : item.effectiveImageItemId
-                                
+                        HStack(spacing: 8) {
+                            ForEach(vm.seasons) { season in
+                                let isSelected = season.Id == vm.selectedSeasonId
                                 Button {
                                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                        showEpisodesDrawer = false
-                                    }
-                                    if index != vm.currentIndex {
-                                        vm.currentIndex = index
-                                        vm.loadItem(at: index)
+                                        vm.selectSeason(season)
                                     }
                                 } label: {
-                                    ZStack {
-                                        let server = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
-                                        let imageURLString = "\(server)/Items/\(targetImageId)/Images/Primary?api_key=\(appState.accessToken)&maxWidth=500&quality=80"
-                                        let imageURL = URL(string: imageURLString)
-                                        
-                                        CachedAsyncImage(url: imageURL) { phase in
-                                            switch phase {
-                                            case .success(let img):
-                                                img
-                                                    .resizable()
-                                                    .aspectRatio(contentMode: .fill)
-                                            default:
-                                                Color.white.opacity(0.08)
-                                            }
-                                        }
-                                        .frame(width: 150, height: 84)
-                                        .clipped()
-                                        
-                                        LinearGradient(
-                                            colors: [.clear, Color.black.opacity(0.85)],
-                                            startPoint: .top,
-                                            endPoint: .bottom
+                                    Text(season.Name)
+                                        .font(.caption.weight(isSelected ? .bold : .medium))
+                                        .foregroundStyle(isSelected ? .white : .white.opacity(0.75))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 5)
+                                        .background(isSelected ? Color.blue : Color.white.opacity(0.12))
+                                        .clipShape(Capsule())
+                                        .overlay(
+                                            Capsule()
+                                                .stroke(isSelected ? Color.blue.opacity(0.8) : Color.white.opacity(0.15), lineWidth: 1)
                                         )
-                                        
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            HStack {
-                                                if !se.isEmpty {
-                                                    Text(se)
-                                                        .font(.system(size: 10, weight: .bold))
-                                                        .foregroundStyle(.white)
-                                                        .padding(.horizontal, 5)
-                                                        .padding(.vertical, 2)
-                                                        .background(Color.black.opacity(0.6))
-                                                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                                                }
-                                                Spacer()
-                                                if item.UserData?.Played == true {
-                                                    Image(systemName: "checkmark.circle.fill")
-                                                        .font(.system(size: 12))
-                                                        .foregroundStyle(Color.green)
-                                                }
-                                            }
-                                            
-                                            Spacer()
-                                            
-                                            Text(item.Name)
-                                                .font(.system(size: 11, weight: .semibold))
-                                                .foregroundStyle(.white)
-                                                .lineLimit(1)
-                                            
-                                            if let playedTicks = item.UserData?.PlaybackPositionTicks,
-                                               let totalTicks = item.RunTimeTicks,
-                                               totalTicks > 0,
-                                               playedTicks > 0 {
-                                                let progress = min(max(Double(playedTicks) / Double(totalTicks), 0.0), 1.0)
-                                                GeometryReader { g in
-                                                    ZStack(alignment: .leading) {
-                                                        Capsule().fill(Color.white.opacity(0.3))
-                                                        Capsule().fill(Color.blue).frame(width: g.size.width * CGFloat(progress))
-                                                    }
-                                                }
-                                                .frame(height: 3)
-                                            }
-                                        }
-                                        .padding(6)
-                                    }
-                                    .frame(width: 150, height: 84)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                            .stroke(isCurrent ? Color.accentColor : Color.white.opacity(0.18), lineWidth: isCurrent ? 2.5 : 1)
-                                    )
-                                    .shadow(color: isCurrent ? Color.accentColor.opacity(0.35) : Color.black.opacity(0.3), radius: 6)
                                 }
                                 .buttonStyle(.plain)
-                                .id(item.Id)
+                                .id(season.Id)
                             }
                         }
-                        .padding(.horizontal, 16)
+                        .padding(.horizontal, 4)
                         .padding(.vertical, 2)
                     }
+                }
+
+                if vm.isLoadingSeasonEpisodes {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                            .tint(.white)
+                        Spacer()
+                    }
                     .frame(height: 90)
-                    .onAppear {
-                        if vm.playlist.indices.contains(vm.currentIndex) {
-                            let curId = vm.playlist[vm.currentIndex].Id
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                proxy.scrollTo(curId, anchor: .center)
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            LazyHStack(spacing: 12) {
+                                ForEach(Array(vm.drawerEpisodes.enumerated()), id: \.element.Id) { index, item in
+                                    let isCurrent = item.Id == vm.currentItem?.Id
+                                    let s = item.ParentIndexNumber.map { String(format: "S%02d", $0) } ?? ""
+                                    let e = item.IndexNumber.map { String(format: "E%02d", $0) } ?? ""
+                                    let se = [s, e].filter { !$0.isEmpty }.joined()
+                                    let targetImageId = item.ImageTags?["Primary"] != nil ? item.Id : item.effectiveImageItemId
+                                    
+                                    Button {
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                            showEpisodesDrawer = false
+                                        }
+                                        vm.playDrawerItem(item: item)
+                                    } label: {
+                                        ZStack {
+                                            let server = appState.serverURL.hasSuffix("/") ? String(appState.serverURL.dropLast()) : appState.serverURL
+                                            let imageURLString = "\(server)/Items/\(targetImageId)/Images/Primary?api_key=\(appState.accessToken)&maxWidth=500&quality=80"
+                                            let imageURL = URL(string: imageURLString)
+                                            
+                                            CachedAsyncImage(url: imageURL) { phase in
+                                                switch phase {
+                                                case .success(let img):
+                                                    img
+                                                        .resizable()
+                                                        .aspectRatio(contentMode: .fill)
+                                                default:
+                                                    Color.white.opacity(0.08)
+                                                }
+                                            }
+                                            .frame(width: 150, height: 84)
+                                            .clipped()
+                                            
+                                            LinearGradient(
+                                                colors: [.clear, Color.black.opacity(0.85)],
+                                                startPoint: .top,
+                                                endPoint: .bottom
+                                            )
+                                            
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                HStack {
+                                                    if !se.isEmpty {
+                                                        Text(se)
+                                                            .font(.system(size: 10, weight: .bold))
+                                                            .foregroundStyle(.white)
+                                                            .padding(.horizontal, 5)
+                                                            .padding(.vertical, 2)
+                                                            .background(Color.black.opacity(0.6))
+                                                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                                                    }
+                                                    Spacer()
+                                                    if item.UserData?.Played == true {
+                                                        Image(systemName: "checkmark.circle.fill")
+                                                            .font(.system(size: 12))
+                                                            .foregroundStyle(Color.green)
+                                                    }
+                                                }
+                                                
+                                                Spacer()
+                                                
+                                                Text(item.Name)
+                                                    .font(.system(size: 11, weight: .semibold))
+                                                    .foregroundStyle(.white)
+                                                    .lineLimit(1)
+                                                
+                                                if let playedTicks = item.UserData?.PlaybackPositionTicks,
+                                                   let totalTicks = item.RunTimeTicks,
+                                                   totalTicks > 0,
+                                                   playedTicks > 0 {
+                                                    let progress = min(max(Double(playedTicks) / Double(totalTicks), 0.0), 1.0)
+                                                    GeometryReader { g in
+                                                        ZStack(alignment: .leading) {
+                                                            Capsule().fill(Color.white.opacity(0.3))
+                                                            Capsule().fill(Color.blue).frame(width: g.size.width * CGFloat(progress))
+                                                        }
+                                                    }
+                                                    .frame(height: 3)
+                                                }
+                                            }
+                                            .padding(6)
+                                        }
+                                        .frame(width: 150, height: 84)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                .stroke(isCurrent ? Color.accentColor : Color.white.opacity(0.18), lineWidth: isCurrent ? 2.5 : 1)
+                                        )
+                                        .shadow(color: isCurrent ? Color.accentColor.opacity(0.35) : Color.black.opacity(0.3), radius: 6)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .id(item.Id)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 2)
+                        }
+                        .frame(height: 90)
+                        .onAppear {
+                            if let curId = vm.currentItem?.Id, vm.drawerEpisodes.contains(where: { $0.Id == curId }) {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                    proxy.scrollTo(curId, anchor: .center)
+                                }
                             }
                         }
-                    }
-                    .onChange(of: showEpisodesDrawer) { _, isShown in
-                        if isShown, vm.playlist.indices.contains(vm.currentIndex) {
-                            let curId = vm.playlist[vm.currentIndex].Id
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                                proxy.scrollTo(curId, anchor: .center)
+                        .onChange(of: showEpisodesDrawer) { _, isShown in
+                            if isShown {
+                                if vm.isEpisode && vm.seasons.isEmpty {
+                                    vm.fetchSeasons(for: vm.currentItem)
+                                }
+                                if let curId = vm.currentItem?.Id, vm.drawerEpisodes.contains(where: { $0.Id == curId }) {
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                        proxy.scrollTo(curId, anchor: .center)
+                                    }
+                                }
+                            }
+                        }
+                        .onChange(of: vm.selectedSeasonId) { _, _ in
+                            if let firstId = vm.drawerEpisodes.first?.Id {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                    proxy.scrollTo(firstId, anchor: .leading)
+                                }
+                            }
+                        }
+                        .onChange(of: vm.drawerEpisodes.count) { _, _ in
+                            if let curId = vm.currentItem?.Id, vm.drawerEpisodes.contains(where: { $0.Id == curId }) {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                    proxy.scrollTo(curId, anchor: .center)
+                                }
                             }
                         }
                     }
@@ -1773,9 +2390,17 @@ struct PlanktonPlayerView: View {
                         }
                         .glassEffect(in: Circle())
                         
-                        DragonetAirPlayButton()
-                            .frame(width: 44, height: 44)
-                            .glassEffect(in: Circle())
+                        DragonetAirPlayButton(player: vm.player) { presenting in
+                            if presenting {
+                                playerController?.cancelTimer()
+                            } else {
+                                if vm.controlsVisible && !showEpisodesDrawer {
+                                    playerController?.resetAutoHideTimer()
+                                }
+                            }
+                        }
+                        .frame(width: 44, height: 44)
+                        .glassEffect(in: Circle())
                     }
                 }
                 .padding(.top, 8)
@@ -1899,6 +2524,50 @@ struct PlanktonPlayerView: View {
         } else {
             return String(format: "%d:%02d", minutes, secs)
         }
+    }
+    
+    // MARK: - Error Screen
+    
+    private func errorStateView(_ error: String) -> some View {
+        VStack(spacing: 20) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 60))
+                .foregroundColor(.yellow)
+            
+            Text(error)
+                .font(.headline)
+                .foregroundColor(.gray)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            
+            HStack(spacing: 16) {
+                Button {
+                    vm.retryPlayback()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Retry")
+                    }
+                    .font(.headline)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                }
+                .buttonStyle(.bordered)
+                .tint(.white)
+                
+                Button("Dismiss") {
+                    dismiss()
+                }
+                .font(.headline)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(.top, 8)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.ignoresSafeArea())
     }
 }
 

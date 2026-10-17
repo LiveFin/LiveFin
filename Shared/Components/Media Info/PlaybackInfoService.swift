@@ -8,8 +8,15 @@
 import Foundation
 import JellyfinAPI
 import UIKit
+import VideoToolbox
 
 struct JFPlaybackInfoService {
+    public static var isAV1HardwareSupported: Bool = {
+        if #available(iOS 17.0, tvOS 17.0, macOS 14.0, *) {
+            return VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1)
+        }
+        return false
+    }()
     static func fetchPlaybackInfo(appState: AppState, itemId: String, debug: Bool = false, isLiveTV: Bool = false) async throws -> PlaybackInfoResponse {
         try await fetchPlaybackInfo(
             itemId: itemId,
@@ -38,7 +45,7 @@ struct JFPlaybackInfoService {
         )
     }
 
-    private static func buildDeviceProfile(maxBitrate: Int?, isLiveTV: Bool) -> [String: Any] {
+    static func buildDeviceProfile(maxBitrate: Int? = nil, isLiveTV: Bool = false) -> [String: Any] {
         var profile: [String: Any] = [:]
 
         // tvOS (Apple TV) is almost always wired/strong Wi-Fi and HDMI-connected to an
@@ -64,11 +71,21 @@ struct JFPlaybackInfoService {
         profile["Name"] = profileName
         profile["MaxStreamingBitrate"] = maxBitrate ?? defaultBitrate
 
+        // AVPlayer on iOS 26+ natively supports H.264, HEVC (8-bit and 10-bit), and conditionally AV1
+        // (strictly on devices with hardware decode support such as A17 Pro / M3+) in MP4/M4V/MOV containers.
+        // HLS (m3u8) on Apple platforms does NOT support AV1; HLS streams must use H.264 or HEVC.
+        // Codecs like MPEG2, VC-1, VP9, and VP9 10-bit cannot be played natively by AVPlayer
+        // and are excluded from DirectPlayProfiles so Jellyfin will transcode them.
+        var directVideoCodecs = "h264,hevc,h265"
+        if isAV1HardwareSupported {
+            directVideoCodecs += ",av1"
+        }
+
         profile["DirectPlayProfiles"] = [[
             "Container": "mp4,m4v,mov",
             "Type": "Video",
             "AudioCodec": directPlayAudioCodecs,
-            "VideoCodec": "h264,hevc,h265"
+            "VideoCodec": directVideoCodecs
         ], [
             "Container": "m3u8",
             "Type": "Video",
@@ -89,7 +106,7 @@ struct JFPlaybackInfoService {
             "Protocol": "hls",
             "Context": "Streaming",
             "MaxAudioChannels": maxAudioChannels,
-            "MinSegments": 1
+            "MinSegments": 2
         ]
         
         let tsTranscodeProfile: [String: Any] = [
@@ -100,12 +117,12 @@ struct JFPlaybackInfoService {
             "Protocol": "hls",
             "Context": "Streaming",
             "MaxAudioChannels": maxAudioChannels,
-            "MinSegments": 1
+            "MinSegments": 2
         ]
         
         // ts is offered as a transcode target for both Live TV and library (VOD) content,
-        // on both platforms — just deprioritized behind mp4 for library since most servers/
-        // clients handle fMP4-in-HLS more predictably for on-demand seeking.
+        // on both platforms — prioritized for Live TV for tuner stability, deprioritized behind
+        // mp4 for library since most servers/clients handle fMP4-in-HLS more predictably for on-demand seeking.
         if isLiveTV {
             transcodingProfiles.append(tsTranscodeProfile)
             transcodingProfiles.append(mp4TranscodeProfile)
@@ -141,37 +158,55 @@ struct JFPlaybackInfoService {
             "Format": "ssa", "Method": "External"
         ]]
 
-        var h264Conditions: [[String: Any]] = [
-            [ "Condition": "LessThanEqual", "Property": "VideoLevel", "Value": "52" ]
+        // Progressive playback requirement: AVPlayer cannot deinterlace hardware feeds.
+        let interlacedRule: [String: Any] = [
+            "Condition": "Equals",
+            "Property": "IsInterlaced",
+            "Value": "false"
+        ]
+
+        // H.264 Conditions: Level <= 5.2, 8-bit depth (Hi10P / 10-bit H.264 requires transcoding), progressive only.
+        let h264Conditions: [[String: Any]] = [
+            [ "Condition": "LessThanEqual", "Property": "VideoLevel", "Value": "52" ],
+            [ "Condition": "LessThanEqual", "Property": "VideoBitDepth", "Value": "8" ],
+            interlacedRule
         ]
         
-        var hevcConditions: [[String: Any]] = [
+        // HEVC Conditions: Level <= 6.1 (183), up to 10-bit depth (Main, Main 10, HDR10, HLG, Dolby Vision), progressive only.
+        let hevcConditions: [[String: Any]] = [
             [ "Condition": "LessThanEqual", "Property": "VideoLevel", "Value": "183" ],
             [ "Condition": "LessThanEqual", "Property": "VideoBitDepth", "Value": "10", "IsRequired": false ],
             [ "Condition": "EqualsAny", "Property": "VideoRangeType", "Value": "SDR,HDR10,HLG,DOVI", "IsRequired": false ],
             [ "Condition": "EqualsAny", "Property": "VideoProfile", "Value": "Main,Main 10,Main10", "IsRequired": false ],
-            [ "Condition": "NotEquals", "Property": "VideoCodecTag", "Value": "hev1" ]
+            interlacedRule
         ]
 
-        if isLiveTV {
-            let interlacedRule: [String: Any] = [
-                "Condition": "Equals",
-                "Property": "IsInterlaced",
-                "Value": "false"
-            ]
-            h264Conditions.append(interlacedRule)
-            hevcConditions.append(interlacedRule)
-        }
-
-        profile["CodecProfiles"] = [[
+        var codecProfiles: [[String: Any]] = [[
             "Type": "Video", "Codec": "h264", "Conditions": h264Conditions
         ], [
             "Type": "Video", "Codec": "hevc,h265", "Conditions": hevcConditions
-        ], [
+        ]]
+
+        if isAV1HardwareSupported {
+            // AV1 Conditions: Main profile, up to 10-bit depth (supported on A17 Pro / M3+), progressive only.
+            let av1Conditions: [[String: Any]] = [
+                [ "Condition": "LessThanEqual", "Property": "VideoBitDepth", "Value": "10", "IsRequired": false ],
+                [ "Condition": "EqualsAny", "Property": "VideoProfile", "Value": "Main", "IsRequired": false ],
+                [ "Condition": "EqualsAny", "Property": "VideoRangeType", "Value": "SDR,HDR10,HLG", "IsRequired": false ],
+                interlacedRule
+            ]
+            codecProfiles.append([
+                "Type": "Video", "Codec": "av1", "Conditions": av1Conditions
+            ])
+        }
+
+        codecProfiles.append([
             "Type": "Audio", "Codec": "aac", "Conditions": [[
                 "Condition": "LessThanEqual", "Property": "AudioChannels", "Value": maxAudioChannels
             ]]
-        ]]
+        ])
+
+        profile["CodecProfiles"] = codecProfiles
         
         return profile
     }

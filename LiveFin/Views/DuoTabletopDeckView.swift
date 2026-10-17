@@ -155,7 +155,7 @@ struct DragonetTabletopDeckView: View {
                     .accessibilityLabel("Picture in Picture")
                     
                     // AirPlay Button
-                    DragonetAirPlayButton()
+                    DragonetAirPlayButton(player: vm.player)
                         .frame(width: 44, height: 44)
                         .background(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -825,10 +825,12 @@ struct PlanktonTabletopDeckView: View {
                         
                         Spacer()
                         
-                        if vm.playlist.count > 1 {
-                            Text("\(vm.currentIndex + 1)/\(vm.playlist.count)")
-                                .font(.system(size: 12, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.5))
+                        if vm.playlist.count > 1 || vm.isEpisode {
+                            if vm.playlist.count > 1 {
+                                Text("\(vm.currentIndex + 1)/\(vm.playlist.count)")
+                                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.5))
+                            }
                             
                             Image(systemName: showEpisodesDrawer ? "chevron.down" : "chevron.up")
                                 .font(.system(size: 12, weight: .bold))
@@ -856,7 +858,7 @@ struct PlanktonTabletopDeckView: View {
                     .accessibilityLabel("Picture in Picture")
                     
                     // AirPlay Button
-                    DragonetAirPlayButton()
+                    DragonetAirPlayButton(player: vm.player)
                         .frame(width: 54, height: 54)
                         .background(
                             RoundedRectangle(cornerRadius: 14, style: .continuous)

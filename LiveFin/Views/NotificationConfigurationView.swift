@@ -1,4 +1,3 @@
-//
 //  NotificationConfigurationView.swift
 //  LiveFin
 //

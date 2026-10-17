@@ -884,18 +884,25 @@ struct DemoLibraryPosterCard: View {
     let serverURL: String
     
     var body: some View {
+        let imageItemId = item.effectiveImageItemId
+        let imageTag = item.effectivePrimaryImageTag
+        
         VStack(alignment: .leading, spacing: 8) {
             Color(UIColor.secondarySystemBackground)
                 .aspectRatio(2/3, contentMode: .fit)
                 .overlay(
-                    Group {
-                        if let tag = item.primaryImageTag,
-                           let url = URL(string: "\(serverURL)/Items/\(item.Id)/Images/Primary?tag=\(tag)&maxWidth=400") {
+                    GeometryReader { geo in
+                        if let tag = imageTag,
+                           let url = URL(string: "\(serverURL)/Items/\(imageItemId)/Images/Primary?tag=\(tag)&maxWidth=400") {
                             AsyncImage(url: url) { phase in
                                 Group {
                                     switch phase {
                                     case .success(let image):
-                                        image.resizable().aspectRatio(contentMode: .fill)
+                                        image
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fill)
+                                            .frame(width: geo.size.width, height: geo.size.height)
+                                            .clipped()
                                     case .failure:
                                         ProgressView().scaleEffect(0.8)
                                     case .empty:
