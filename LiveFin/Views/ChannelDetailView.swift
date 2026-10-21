@@ -1,8 +1,11 @@
 import SwiftUI
 import Foundation
 import AVKit
+#if canImport(WebKit)
 import WebKit
+#endif
 import UIKit
+import JellyfinAPI
 
 // Pre-parsed item wrapper to avoid performance bottlenecks during scroll renders
 struct ProgramDetailItem: Identifiable {
@@ -149,7 +152,11 @@ struct ChannelDetailView: View {
 
     // Blends with backdrop color or falls back to logo color palette
     var effectivePaletteColor: Color {
+        #if os(tvOS)
+        rawBackdropColor ?? rawLogoColor ?? (colorScheme == .dark ? Color.black : Color.white)
+        #else
         rawBackdropColor ?? rawLogoColor ?? (colorScheme == .dark ? Color.black : Color(UIColor.systemBackground))
+        #endif
     }
 
     var blendedBackgroundColor: Color {
@@ -189,10 +196,17 @@ struct ChannelDetailView: View {
 
                             Group {
                                 if let converted = detail.jfProgram {
+                                    #if os(tvOS)
+                                    NavigationLink(destination: TVProgramView(program: converted, appState: appState).environmentObject(appState)) {
+                                        ProgramRowView(program: detail.item, programs: programs, channelId: channel.id, appState: appState)
+                                    }
+                                    .buttonStyle(.plain)
+                                    #else
                                     NavigationLink(destination: ProgramView(program: converted, appState: appState).environmentObject(appState)) {
                                         ProgramRowView(program: detail.item, programs: programs, channelId: channel.id, appState: appState)
                                     }
                                     .buttonStyle(.plain)
+                                    #endif
                                 } else {
                                     ProgramRowView(program: detail.item, programs: programs, channelId: channel.id, appState: appState)
                                 }
@@ -208,11 +222,19 @@ struct ChannelDetailView: View {
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            #if os(tvOS)
+                            .fill(
+                                colorScheme == .dark
+                                    ? Color.secondary.opacity(0.2)
+                                    : Color.secondary.opacity(0.12)
+                            )
+                            #else
                             .fill(
                                 colorScheme == .dark
                                     ? Color(UIColor.secondarySystemGroupedBackground).opacity(0.85)
                                     : Color(UIColor.secondarySystemGroupedBackground)
                             )
+                            #endif
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -337,10 +359,12 @@ struct ChannelDetailView: View {
         }
         .background(blendedBackgroundColor.ignoresSafeArea())
         .ignoresSafeArea(.container, edges: hasBackdrop ? .top : [])
+        #if !os(tvOS)
         .toolbarBackground(showStickyHeader ? .visible : .hidden, for: .navigationBar)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
         .coordinateSpace(name: "scroll")
         .navigationTitle("")
-        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if showStickyHeader {
                 ToolbarItem(placement: .principal) {
@@ -368,6 +392,10 @@ struct ChannelDetailView: View {
         }
         .animation(.easeInOut(duration: 0.25), value: showStickyHeader)
         .fullScreenCover(item: $selectedStreamItem) { item in
+            #if os(tvOS)
+            TVDragonetPlayerView(channel: channel.asJFChannel)
+                .environmentObject(appState)
+            #else
             DragonetPlayerView(
                  streamURL: item.url,
                  channel: channel,
@@ -375,6 +403,7 @@ struct ChannelDetailView: View {
                 onPlaybackError: { msg in playbackErrorMessage = msg }
              )
              .environmentObject(appState)
+            #endif
          }
         .alert("Playback Error", isPresented: Binding(get: { playbackErrorMessage != nil }, set: { if !$0 { playbackErrorMessage = nil } })) {
             Button("OK", role: .cancel) { playbackErrorMessage = nil }

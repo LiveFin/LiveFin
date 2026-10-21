@@ -66,6 +66,7 @@
 			membershipExceptions = (
 				App/AppState.swift,
 				App/KeychainHelper.swift,
+				Views/ChannelDetailView.swift,
 			);
 			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
 		};
@@ -89,9 +90,6 @@
 				Components/DemoMode/DemoChannel.swift,
 				Components/Image/ProgramImage.swift,
 				Components/Recording/NotificationManager.swift,
-				Components/Recording/ProgramRecordingViewModel.swift,
-				Components/Recording/RecordingConfiguration.swift,
-				Components/Recording/RecordingsViewModel.swift,
 			);
 			target = EB15E79C2EED2DCF00A778BD /* LiveFin tvOS */;
 		};

@@ -410,6 +410,12 @@ struct JFChannel: Identifiable, Hashable {
     let name: String
     let isFavorite: Bool
     
+    init(id: String, name: String, isFavorite: Bool = false) {
+        self.id = id
+        self.name = name
+        self.isFavorite = isFavorite
+    }
+
     init?(json: [String: Any]) {
         guard let id = json["Id"] as? String else { return nil }
         self.id = id
@@ -425,5 +431,11 @@ struct JFChannel: Identifiable, Hashable {
 extension JFChannel {
     func asLiveDto(baseURL: String) -> LiveTvChannelDto {
         LiveTvChannelDto(id: id, name: name, number: nil, startDate: nil, endDate: nil, baseURL: baseURL, userData: UserDataDto(isFavorite: isFavorite))
+    }
+}
+
+extension LiveTvChannelDto {
+    var asJFChannel: JFChannel {
+        JFChannel(id: id, name: name ?? "Channel", isFavorite: userData?.isFavorite ?? false)
     }
 }
